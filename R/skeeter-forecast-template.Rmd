@@ -7,20 +7,23 @@ output: pdf_document
 # set rmarkdown options
 here::i_am("R/skeeter-forecast-template.Rmd")
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
-
 ## get data
 library(tidyverse)
+library(forecast)
 library(here)
+library(kableExtra)
 ## set options
 options(mc.cores = parallel::detectCores())
+theme_set(theme_minimal())
 
 ## user setting
 raft_filepath = sprintf("C:/Users/%s/OneDrive - UNT System/AERI Seed Insect Carbon/Data/2024_aeri_seed_mosquito_data.xlsx", Sys.info()[['user']])
 
-pred_filepath = sprintf("C:/Users/%s/OneDrive - UNT System/AERI Seed Insect Carbon/Data/2024_aeri_seed_mosquito_predictions.xlsx", Sys.info()[['user']])
+pred_filepath = sprintf("C:/Users/%s/OneDrive - UNT System/Shared Documents - Leaf Litter Hot Moments/General/2024_predictions_aeri_seed_mosquito.xlsx", Sys.info()[['user']])
+```
 
+```{r data import}
 ## this script imports and tidys up raft count data
-
 raft_data = readxl::read_excel(raft_filepath) %>%
   select(-Block, -Mesocosm, -Treatment, -Site)
 
@@ -31,17 +34,18 @@ raftNumCols = names(raft_data) %>% as.numeric %>% is.na %>% `!`
 raft_data = raft_data %>%
   rename_with(~as.character(openxlsx::convertToDate(.x, origin='1900-01-01')), .cols = names(.)[raftNumCols])
 
-pred_data = readxl::read_excel(pred_filepath) %>%
+pred_data = readxl::read_excel(pred_filepath, skip = 1) %>%
   filter(is.na(name) |
          name != 'Total')
 predNumCols = names(pred_data) %>% as.numeric %>% is.na %>% `!`
 
 pred_data = pred_data %>%
   rename_with(~as.character(openxlsx::convertToDate(.x, origin='1900-01-01')), .cols = names(.)[predNumCols]) %>% 
-  mutate(across(where(-c(name)), as.numeric))
+  mutate(across(-c(name), as.numeric))
 
 # count_vec = readxl::read_excel(pred_filepath)%>% filter(name == 'Total')
-count_df = raft_data %>% select(which(raftNumCols)) %>% colSums(na.rm = TRUE) %>% enframe(name = 'date', value = 'count')
+count_df = raft_data %>% select(which(raftNumCols)) %>% colSums(na.rm = FALSE) %>% enframe(name = 'date', value = 'count') %>% 
+  mutate(date = as.Date(date))
 
 current_date = as.character(Sys.Date())
 
@@ -54,15 +58,67 @@ name_df = c('GD' = 'Grace',
             'JRB' = 'Dr. B',
             'ZC' = 'Z',
             'ARM' = 'Angel',
-            'CRG' = 'Chris')
+            'CRG' = 'Chris',
+            'JK' = 'Juwan')
+
 
 ```
 
-Good afternoon! Here is your Skeeter raft report for `r Sys.Date()`. 
+Good afternoon! Here is your Skeeter report for `r format(Sys.Date(), "%B %d, %Y")`. 
 
-Today we counted `r count_df %>% filter(date == eval(current_date)) %>% select(count) %>% unlist` skeeter rafts. The closest prediction was made by 
-`r which.min(abs(pred_data[[eval(current_date)]] - count_df %>% filter(date == eval(current_date)) %>% select(count) %>% unlist %>% unname))`
+&nbsp;
+
+Today we counted `r count_df %>% filter(date == eval(current_date)) %>% select(count) %>% unlist` skeeter rafts. The closest prediction today was made by 
+`r name_df[which.min(abs(pred_data[[eval(current_date)]] - count_df %>% filter(date == eval(current_date)) %>% select(count) %>% unlist %>% unname))]` with a prediction of `r pred_data[which.min(abs(pred_data[[eval(current_date)]] - count_df %>% filter(date == eval(current_date)) %>% select(count) %>% unlist %>% unname)),eval(current_date)]`. Get your predictions in before tomorrow's count for a chance to show off your prediction skills!
+
+```{r time series, fig.align='center', fig.height=4, fig.width=7, fig.cap = "Daily predictions (past = grey circles, current = black circles) and observations (black line) of mosquito rafts counted in mesocosms."}
+# create a long plot data frame of predictions
+pred_plotDf = pred_data %>% 
+  pivot_longer(-name, names_to = 'date', values_to = 'prediction') %>% 
+  mutate(date = as.Date(date),
+         old = ifelse(as.Date(date)<(Sys.Date()+1), TRUE, FALSE))
+
+# set plotting attributes
+ylims = c(0,10^(signif(log10(max(c(count_df$count,na.omit(pred_plotDf$prediction)))))))
+
+labelsDf = data.frame(date = as.numeric(count_df$date), datelab = as.character(format(count_df$date, "%b-%d")), day = paste0("Day ",1:nrow(count_df)))# %>% unite('label', date:day, sep = "") %>% unlist %>% unname
+
+# do the plotting
+ggplot()+
+  geom_point(data = pred_plotDf, aes(x = as.numeric(date), y = prediction, color = old), shape = 21, fill = 'white')+
+  geom_line(data = count_df , aes(x = as.numeric(date), y = count ), linewidth = 1.1, color = 'black')+
+  scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
+  scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
+  scale_color_manual(values = c('black','darkgrey'))+
+  theme(axis.title.x = element_blank(),
+        legend.position = 'none',
+        axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1),
+        axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.minor.x = element_blank())
+  
+
+```
+
+To measure prediction accuracy, we will calculate the mean absolute error $$MAE = \frac{\sum_{i}^{n}|x_{i} - y_{i}|}{n}$$
 
 
+
+```{r rankings table}
+# create prediction accuracy table
+pred_accDf = pred_plotDf %>% 
+  left_join(count_df, by = 'date') %>% 
+  mutate(diff = count - prediction) %>% 
+  filter(!is.na(diff)) %>% 
+  group_by(name) %>% 
+  mutate(MAE = sum(abs(diff))/n()) %>% 
+  select(name, date, diff, MAE) %>% 
+  arrange(MAE) %>% 
+  pivot_wider(id_cols = c(name, MAE), names_from = 'date', values_from = 'diff') %>%
+  relocate(MAE, .after = last_col())
+  
+knitr::kable(pred_accDf, caption = "The rankings to date are:") %>% 
+  kableExtra::kable_styling(latex_options = 'scale_down')
+```
 
 and forecast for `r Sys.Date()+1`. 
