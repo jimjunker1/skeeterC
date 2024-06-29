@@ -85,7 +85,7 @@ labelsDf = data.frame(date = as.numeric(count_df$date), datelab = as.character(f
 
 # do the plotting
 ggplot()+
-  geom_point(data = pred_plotDf, aes(x = as.numeric(date), y = prediction, color = old), shape = 21, fill = 'white')+
+  geom_point(data = pred_plotDf, aes(x = as.numeric(date), y = prediction, color = old), shape = 21, fill = 'white', size = 1.2)+
   geom_line(data = count_df , aes(x = as.numeric(date), y = count ), linewidth = 1.1, color = 'black')+
   scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
   scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
@@ -100,15 +100,21 @@ ggplot()+
 
 ```
 
-To measure prediction accuracy, we will calculate the mean absolute error $$MAE = \frac{\sum_{i}^{n}|x_{i} - y_{i}|}{n}$$
+To measure prediction accuracy, we will calculate the mean absolute error,
 
+$$MAE = \frac{\sum_{i}^{n}|y_{i} - x_{i}|}{n}$$
 
+where, $y_i$ is the prediction, $x_i$ is the observed value, and $n$ is the number of observations.
+
+\newpage
+
+### Rankings
 
 ```{r rankings table}
 # create prediction accuracy table
 pred_accDf = pred_plotDf %>% 
   left_join(count_df, by = 'date') %>% 
-  mutate(diff = count - prediction) %>% 
+  mutate(diff = prediction - count) %>% 
   filter(!is.na(diff)) %>% 
   group_by(name) %>% 
   mutate(MAE = sum(abs(diff))/n()) %>% 
@@ -121,4 +127,94 @@ knitr::kable(pred_accDf, caption = "The rankings to date are:") %>%
   kableExtra::kable_styling(latex_options = 'scale_down')
 ```
 
-and forecast for `r Sys.Date()+1`. 
+### Cumulative patterns
+
+```{r cumulative patterns}
+
+cumulative_df = count_df %>% 
+  bind_rows(data.frame(date = as.Date("2024-06-26"),
+                       count = 0),.) %>% 
+  mutate(cumsum = cumsum(count))
+ 
+
+ylims = c(0, ceiling(max(cumulative_df$cumsum, na.rm = TRUE)/10)*10)
+
+labelsDf = data.frame(date = as.numeric(cumulative_df$date), datelab = as.character(format(cumulative_df$date, "%b-%d")), day = paste0("Day ",0:(nrow(cumulative_df)-1)))
+
+cumulative_df %>% 
+  ggplot()+
+  geom_line(aes(x = date, y = cumsum), linewidth = 1.1)+
+  geom_point(aes(x = date, y = cumsum), color = 'black', size = 1.1)+
+  scale_y_continuous(name = "Cumulative Skeeter Rafts (#)", limits = ylims)+
+  scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
+  theme(axis.title.x = element_blank(),
+        legend.position = 'none',
+        axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1),
+        axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.minor.x = element_blank())
+
+```
+
+## Forecasts
+
+Here are a few different models to forecast raft counts for `r Sys.Date()+1`. 
+
+### Previous value
+
+The simplest prediction is to simply predict the previous raft count. 
+
+```{r last value}
+
+lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+
+ylims = c(0, ceiling(max(count_df$count, na.rm = TRUE)/5)*5)
+
+count_df %>% 
+  ggplot()+
+  geom_line(data = count_df[c(lastVal, lastVal+1),] %>% fill(count,.direction = 'down'), aes(x = date, y = count), linewidth = 1.2, color = 'grey')+
+  geom_point(data = count_df[c(lastVal, lastVal+1),] %>% fill(count,.direction = 'down') %>% slice_tail(n = 1), aes(x = date, y = count), size = 2, color = 'grey')+
+  geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
+  geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
+  scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
+  scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
+  theme(axis.title.x = element_blank(),
+        legend.position = 'none',
+        axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1),
+        axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.minor.x = element_blank())
+  
+
+```
+
+
+```{r last value accuracy}
+
+lastVal_accDf = readRDS(here::here("data/lastVal_accDf.rds"))
+
+lastVal = count_df %>% ungroup %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+
+lastVal_pred = 
+count_df[c(lastVal, lastVal+1),] %>% fill(count,.direction = 'down') %>% slice_tail(n = 1) %>% rename(prediction = 'count')
+
+lastVal_accDf = lastVal_accDf %>% merge(lastVal_pred, by = 'date', all = TRUE) %>% 
+  mutate(prediction = coalesce(prediction.x, prediction.y)) %>% 
+  select(-prediction.x, -prediction.y)
+
+saveRDS(lastVal_accDf, here::here("data/lastVal_accDf.rds"))
+  
+  lastVal_accDf %>% 
+  mutate(diff = prediction - count) %>% 
+  filter(!is.na(diff)) %>% 
+  mutate(MAE = sum(abs(diff))/n()) %>% 
+  select(date, diff, MAE) %>% 
+  arrange(MAE) %>% 
+  pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>%
+  relocate(MAE, .after = last_col()) %>% 
+  knitr::kable(caption = "Mean predictive deviation of last value approach") %>% 
+  kableExtra::kable_styling(latex_options = 'scale_down')
+
+```
+
+more forecasts to come...
