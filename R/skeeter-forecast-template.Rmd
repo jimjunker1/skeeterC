@@ -9,11 +9,12 @@ here::i_am("R/skeeter-forecast-template.Rmd")
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 ## get data
 library(fitdistrplus)
-library(tidyverse)
 library(forecast)
 library(here)
 library(kableExtra)
 library(brms)
+library(tidyverse)
+
 #
 covInt = function(center = NULL , int = NULL,...){
   # calculate the coverage interval around a value
