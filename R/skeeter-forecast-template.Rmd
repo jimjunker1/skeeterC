@@ -8,12 +8,27 @@ output: pdf_document
 here::i_am("R/skeeter-forecast-template.Rmd")
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 ## get data
+library(fitdistrplus)
 library(tidyverse)
 library(forecast)
 library(here)
 library(kableExtra)
+library(brms)
+#
+covInt = function(center = NULL , int = NULL,...){
+  # calculate the coverage interval around a value
+  # this function returns two values:
+  # lower = center-int
+  # upper = center+int
+  lower = center - int
+  upper = center + int
+  
+  return(list(lower = lower,
+              upper = upper))
+}
 ## set options
 options(mc.cores = parallel::detectCores())
+rstan::rstan_options(auto_write = TRUE)
 theme_set(theme_minimal())
 
 ## user setting
@@ -191,7 +206,9 @@ count_df %>%
 
 ```{r last value accuracy}
 
-lastVal_accDf = readRDS(here::here("data/lastVal_accDf.rds"))
+lastVal_accDf = readRDS(here::here("data/lastVal_accDf.rds")) %>% 
+  merge(count_df, by = 'date', all = TRUE) %>% 
+  select(date, count = "count.y", prediction)
 
 lastVal = count_df %>% ungroup %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
 
@@ -217,4 +234,171 @@ saveRDS(lastVal_accDf, here::here("data/lastVal_accDf.rds"))
 
 ```
 
-more forecasts to come...
+### Global Average
+
+Another simple prediction is to use the global average. This method allows for a calculation of uncertainty based on the variation we observe over time. Importantly, day-to-day variability in egg raft numbers is not related to any process, but arises from random noise centered around some relatively fixed mean value.
+
+```{r global average}
+
+lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+
+globAvg_accDf = readRDS(here::here("data/globAvg_accDf.rds")) %>% 
+  merge(count_df, by = 'date', all = TRUE) %>% 
+  select(date, count = "count.y", prediction, lower, upper)
+
+globAvg = count_df %>% select(count) %>% unlist %>% mean(., na.rm = TRUE)
+
+globAvg_int = count_df %>% select(count) %>% unlist %>% sd(na.rm = TRUE) %>% `/`(lastVal) %>% `*`(1.96) %>% covInt(center = globAvg, int = .)
+
+# add newest prediction into the data.frame
+globAvg_accDf[(lastVal+1),'prediction'] <- globAvg
+globAvg_accDf[(lastVal+1), 'lower'] <- globAvg_int[[1]]
+globAvg_accDf[(lastVal+1), 'upper'] <- globAvg_int[[2]]
+
+#save the dataframe
+saveRDS(globAvg_accDf, here::here("data/globAvg_accDf.rds"))
+
+ylims = c(0, ceiling(max(c(count_df$count, globAvg_accDf$upper), na.rm = TRUE)/5)*5)
+
+globAvg_accDf %>% 
+  ggplot()+
+  geom_line(data = globAvg_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
+  geom_errorbar(data = globAvg_accDf [(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
+  geom_point(data = globAvg_accDf [(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
+  geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
+  geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
+  scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
+  scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
+  theme(axis.title.x = element_blank(),
+        legend.position = 'none',
+        axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1),
+        axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.minor.x = element_blank())
+
+```
+
+```{r global average accuracy}
+
+globAvg_accDf %>% 
+  mutate(diff = prediction - count) %>% 
+  filter(!is.na(diff)) %>% 
+  mutate(MAE = sum(abs(diff))/n()) %>% 
+  select(date, diff, MAE) %>% 
+  arrange(MAE) %>% 
+  pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>%
+  relocate(MAE, .after = last_col()) %>% 
+  knitr::kable(caption = "Mean predictive deviation of global average approach") %>% 
+  kableExtra::kable_styling(latex_options = 'scale_down')
+
+```
+
+However, this approach ignores an important bit of information---the fact that egg rafts are counts and can only take whole numbers (i.e., 1,2,3,...).
+
+## More complex predictions
+
+We can start to make more complex predictions. The best way to begin this is to switch to making predictions at the mesocosm-level and scale up to total counts. This will allow us to possibly include more specific information to the experiment. As the global average example above highlighted, we have to think about the type of data we are taking, in this case counts. There are a number of distributions available for use with count data such as the Poisson and Negative Binomial distributions. Let's take a look at these distributions compared to the most recent distribution of counts.
+
+```{r meso count hist, fig.cap = 'The distribution of egg raft counts from the most recent sampling (bars). We can see the difference in the predictions from the Poisson (blue line) and Negative Binomial (red line) distributions compared to the Guassian (black lines).'}
+
+# build prediction from counts of previous day using poisson likelihood
+last_counts = raft_data %>%
+  dplyr::select(max(which(apply(raft_data, 2, function(x) all(!is.na(x))))))
+
+colnames(last_counts) <- 'count'
+
+norm_pars = fitdist(last_counts$count, 'norm', 'mle')[['estimate']]
+pois_pars = fitdist(last_counts$count, 'pois', 'mle')[['estimate']]
+negbin_pars = fitdist(last_counts$count, 'nbinom', 'mle')[['estimate']]
+
+ggplot()+
+  geom_density(data = data.frame(count = rnorm(1e3, mean = norm_pars['mean'], norm_pars['sd'])), aes(x = count, after_stat(ndensity)), linewidth = 1.1, color = 'black')+
+  geom_density(data = data.frame(count = rpois(1e3, pois_pars['lambda'])), aes(x = count, after_stat(ndensity)), linewidth = 1.1, color = 'blue')+
+  geom_density(data = data.frame(count = rnegbin(1e3, negbin_pars['size'], negbin_pars['mu'])), aes(x = count, after_stat(ndensity)), linewidth = 1.1, color = 'red')+
+    geom_histogram(data = last_counts, aes(x = count, after_stat(ndensity)), alpha = 0.5)+
+  scale_x_continuous(name = "Egg rafts (#)", limits = c(-0.2,NA), breaks = seq.int(0:6))+
+  scale_y_continuous(name = "Relative frequency")+
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank())
+
+```
+
+### Poisson
+
+```{r poisson preds}
+#build a model to esimate total count from individual sample distribution
+pois_simple = brm(count ~ 0 + Intercept,
+                  data = last_counts,
+                  family = poisson(),
+                  prior = prior(normal(0, 10),
+                                class = b,
+                                coef = "Intercept"),
+                  thin = 1,
+                  iter = 1000,
+                  file = here::here("data/models/pois_simple"),
+                  file_refit = 'on_change',
+                  chains = 4)
+
+# convert to draws
+pois_draws = as_draws_df(pois_simple, variable = 'b_Intercept')
+# transform and sample from Poisson with posterior draws
+pois_pred = map_dbl(unlist(pois_draws$b_Intercept), ~sum(rpois(27,exp(.x))))
+
+```
+
+```{r pois simple plot}
+
+lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+
+poisSimple_accDf = readRDS(here::here("data/poisSimple_accDf.rds")) %>% 
+  merge(count_df, by = 'date', all = TRUE) %>% 
+  select(date, count = "count.y", prediction, lower, upper)
+
+poisSimpleMedian = pois_pred %>% median
+
+poisSimpleInt = pois_pred %>% quantile(c(0.025, 0.975))
+
+# add newest prediction into the data.frame
+poisSimple_accDf[(lastVal+1),'prediction'] <- poisSimpleMedian
+poisSimple_accDf[(lastVal+1), 'lower'] <- poisSimpleInt[1]
+poisSimple_accDf[(lastVal+1), 'upper'] <- poisSimpleInt[2]
+
+#save the dataframe
+saveRDS(poisSimple_accDf, here::here("data/poisSimple_accDf.rds"))
+
+ylims = c(0, ceiling(max(c(count_df$count, poisSimple_accDf$upper), na.rm = TRUE)/5)*5)
+
+poisSimple_accDf %>% 
+  ggplot()+
+  geom_line(data = poisSimple_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
+  geom_errorbar(data = poisSimple_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
+  geom_point(data = poisSimple_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
+  geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
+  geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
+  scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
+  scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
+  theme(axis.title.x = element_blank(),
+        legend.position = 'none',
+        axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1),
+        axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.minor.x = element_blank())
+
+```
+
+```{r pois simple accuracy}
+
+poisSimple_accDf %>% 
+  mutate(diff = prediction - count) %>% 
+  filter(!is.na(diff)) %>% 
+  mutate(MAE = sum(abs(diff))/n()) %>% 
+  select(date, diff, MAE) %>% 
+  arrange(MAE) %>% 
+  pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>%
+  relocate(MAE, .after = last_col()) %>% 
+  knitr::kable(caption = "Mean predictive error of a simple Poisson model") %>% 
+  kableExtra::kable_styling(latex_options = 'scale_down')
+
+```
+
+more forecasts to come???
