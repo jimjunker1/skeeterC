@@ -9,11 +9,11 @@ here::i_am("R/skeeter-forecast-template.Rmd")
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 ## get data
 library(fitdistrplus)
-library(tidyverse)
 library(forecast)
 library(here)
 library(kableExtra)
 library(brms)
+library(tidyverse)
 #
 covInt = function(center = NULL , int = NULL,...){
   # calculate the coverage interval around a value
@@ -400,5 +400,118 @@ poisSimple_accDf %>%
   kableExtra::kable_styling(latex_options = 'scale_down')
 
 ```
+
+### Negative Binomial
+
+```{r nb preds}
+
+#build a model to esimate total count from individual sample distribution
+nb_simple = brm(count ~ 1,
+                  data = last_counts,
+                  family = negbinomial(),
+                  # prior = prior(normal(0, 3),
+                  #               class = b,
+                  #               coef = "Intercept"),
+                  thin = 1,
+                  iter = 1000,
+                  file = here::here("data/models/nb_simple"),
+                  file_refit = 'on_change',
+                  chains = 4)
+
+# convert to draws
+nb_draws = as_draws_df(nb_simple, variable = c('b_Intercept','shape'))
+# transform and sample from Poisson with posterior draws
+nb_pred = map2_dbl(unlist(nb_draws$b_Intercept), unlist(nb_draws$shape), ~sum(rnbinom(27,mu = exp(.x), size = .y)))
+
+```
+
+```{r nb simple plot}
+
+lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+
+nbSimple_accDf = readRDS(here::here("data/poisSimple_accDf.rds")) %>% 
+  merge(count_df, by = 'date', all = TRUE) %>% 
+  select(date, count = "count.y", prediction, lower, upper)
+
+nbSimpleMedian = nb_pred %>% median
+
+nbSimpleInt = nb_pred %>% quantile(c(0.025, 0.975))
+
+# add newest prediction into the data.frame
+nbSimple_accDf[(lastVal+1),'prediction'] <- nbSimpleMedian
+nbSimple_accDf[(lastVal+1), 'lower'] <- nbSimpleInt[1]
+nbSimple_accDf[(lastVal+1), 'upper'] <- nbSimpleInt[2]
+
+#save the dataframe
+saveRDS(nbSimple_accDf, here::here("data/nbSimple_accDf.rds"))
+
+ylims = c(0, ceiling(max(c(count_df$count, nbSimple_accDf$upper), na.rm = TRUE)/5)*5)
+
+nbSimple_accDf %>% 
+  ggplot()+
+  geom_line(data = nbSimple_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
+  geom_errorbar(data = nbSimple_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
+  geom_point(data = nbSimple_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
+  geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
+  geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
+  scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
+  scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
+  theme(axis.title.x = element_blank(),
+        legend.position = 'none',
+        axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1),
+        axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.minor.x = element_blank())
+
+```
+
+```{r nb simple accuracy}
+
+nbSimple_accDf %>% 
+  mutate(diff = prediction - count) %>% 
+  filter(!is.na(diff)) %>% 
+  mutate(MAE = sum(abs(diff))/n()) %>% 
+  select(date, diff, MAE) %>% 
+  arrange(MAE) %>% 
+  pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>%
+  relocate(MAE, .after = last_col()) %>% 
+  knitr::kable(caption = "Mean predictive error of a simple Negative Binomial model") %>% 
+  kableExtra::kable_styling(latex_options = 'scale_down')
+
+```
+
+## Using our experimental design for prediction of MBs skeeter rafts
+
+### GAMM prediction
+
+```{r experiment df}
+
+exp_df = raft_data %>% 
+  select(-Mean, -Cumulative) %>% 
+  pivot_longer(-ID, names_to = 'date', values_to = 'count') %>% 
+  rowwise %>% 
+  mutate(date = as.Date(date),
+         block = str_replace_all(ID, "(B\\d{1})_M\\w{1}_D$","\\1"),
+         txt = str_replace_all(ID, "B\\d{1}_(\\M\\w{1})_D$","\\1"),
+         days = as.numeric(date - as.Date("2024-06-26")),
+         litter_days = ifelse(txt == "MA", date - as.Date("2024-06-26"), ifelse(txt == "MB", date - as.Date("2024-06-30"), 0))) %>% 
+  mutate(litter_days = ifelse(litter_days < 0,0,litter_days))
+
+```
+
+```{r gamm}
+
+gamm_pred = brm(count ~ s(litter_days, bs = 'tp', k = 5),# + s(days, bs = 'tp', k = 3), 
+                data = exp_df,
+                family = poisson(),
+                iter = 1000,
+                thin = 1,
+                chain = 2,
+                cores = 2)
+
+y = exp_df %>% mutate(prediction = predict(gamm_pred, newdata = exp_df[,"litter_days"])[1], type = "response")
+
+```
+
 
 more forecasts to come???
