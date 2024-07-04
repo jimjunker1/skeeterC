@@ -52,7 +52,7 @@ raft_data = raft_data %>%
 
 pred_data = readxl::read_excel(pred_filepath, skip = 1) %>%
   filter(is.na(name) |
-         name != 'Total')
+         name != 'Observed')
 predNumCols = names(pred_data) %>% as.numeric %>% is.na %>% `!`
 
 pred_data = pred_data %>%
