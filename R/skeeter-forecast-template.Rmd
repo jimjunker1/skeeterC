@@ -48,7 +48,8 @@ raftNumCols = names(raft_data) %>% as.numeric %>% is.na %>% `!`
 
 # rename cols to readible dates
 raft_data = raft_data %>%
-  rename_with(~as.character(openxlsx::convertToDate(.x, origin='1900-01-01')), .cols = names(.)[raftNumCols])
+  rename_with(~as.character(openxlsx::convertToDate(.x, origin='1900-01-01')), .cols = names(.)[raftNumCols]) %>% 
+  filter(!is.na(ID))
 
 pred_data = readxl::read_excel(pred_filepath, skip = 1) %>%
   filter(is.na(name) |
