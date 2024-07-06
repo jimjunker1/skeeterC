@@ -27,6 +27,19 @@ covInt = function(center = NULL , int = NULL,...){
   return(list(lower = lower,
               upper = upper))
 }
+
+
+split_kable <- function(df, index, n_tb = 2, digits = 3,...) {
+  nn <- dim(df)[1]
+  end <- 0
+  for (i in 1 : index){
+    start <- end + 1
+    rem <- nn - start + 1
+    end <- start + ceiling(rem / (n_tb - i + 1)) - 1
+  }
+  tb <- dplyr::slice(df, start : end)
+  return(knitr::kable(tb, digits = digits,...))
+}
 ## set options
 options(mc.cores = parallel::detectCores())
 rstan::rstan_options(auto_write = TRUE)
@@ -48,7 +61,8 @@ raftNumCols = names(raft_data) %>% as.numeric %>% is.na %>% `!`
 
 # rename cols to readible dates
 raft_data = raft_data %>%
-  rename_with(~as.character(openxlsx::convertToDate(.x, origin='1900-01-01')), .cols = names(.)[raftNumCols])
+  rename_with(~as.character(openxlsx::convertToDate(.x, origin='1900-01-01')), .cols = names(.)[raftNumCols]) %>% 
+  filter(!is.na(ID))
 
 pred_data = readxl::read_excel(pred_filepath, skip = 1) %>%
   filter(is.na(name) |
@@ -139,8 +153,10 @@ pred_accDf = pred_plotDf %>%
   pivot_wider(id_cols = c(name, MAE), names_from = 'date', values_from = 'diff') %>%
   relocate(MAE, .after = last_col())
   
-knitr::kable(pred_accDf, caption = "The rankings to date are:") %>% 
+knitr::kable(pred_accDf, caption = "The rankings to date are:") %>%
   kableExtra::kable_styling(latex_options = 'scale_down')
+# split_kable(pred_accDf, index = 1, n_tb=1, caption = "The rankings to date are:")
+
 ```
 
 ### Cumulative patterns
@@ -481,204 +497,205 @@ nbSimple_accDf %>%
 
 ```
 
-## Using our experimental design for prediction of MBs skeeter rafts
+<!-- ## Using our experimental design for prediction of skeeter rafts -->
 
-```{r experiment df}
+<!-- ```{r experiment df} -->
 
-exp_df = raft_data %>% 
-  select(-Mean, -Cumulative) %>% 
-  pivot_longer(-ID, names_to = 'date', values_to = 'count') %>% 
-  rowwise %>% 
-  mutate(date = as.Date(date),
-         block = str_replace_all(ID, "(B\\d{1})_M\\w{1}_D$","\\1"),
-         block = ifelse(grepl("^BC_.*", ID, ignore.case = TRUE), 
-                        str_replace_all(ID, "(BC)_M\\d{1}_D$","\\1"),
-                        block),
-         txt = str_replace_all(ID, "B\\d{1}_(\\M\\w{1})_D$","\\1"),
-         days = as.numeric(date - as.Date("2024-06-26")),
-         litter_days = ifelse(txt == "MA", date - as.Date("2024-06-26"), ifelse(txt == "MB", date - as.Date("2024-06-30"), 0))) %>% 
-  mutate(litter_days = ifelse(litter_days < 0,0,litter_days)) %>% 
-  filter(!is.na(ID))
+<!-- exp_df = raft_data %>%  -->
+<!--   select(-Mean, -Cumulative) %>%  -->
+<!--   pivot_longer(-ID, names_to = 'date', values_to = 'count') %>%  -->
+<!--   rowwise %>%  -->
+<!--   mutate(date = as.Date(date), -->
+<!--          block = str_replace_all(ID, "(B\\d{1})_M\\w{1}_D$","\\1"), -->
+<!--          block = ifelse(grepl("^BC_.*", ID, ignore.case = TRUE),  -->
+<!--                         str_replace_all(ID, "(BC)_M\\d{1}_D$","\\1"), -->
+<!--                         block), -->
+<!--          txt = str_replace_all(ID, "B\\d{1}_(\\M\\w{1})_D$","\\1"), -->
+<!--          days = as.numeric(date - as.Date("2024-06-26")), -->
+<!--          litter_days = ifelse(txt == "MA", date - as.Date("2024-06-26"), ifelse(txt == "MB", date - as.Date("2024-06-30"), 0))) %>%  -->
+<!--   mutate(litter_days = ifelse(litter_days < 0,0,litter_days)) %>%  -->
+<!--   filter(!is.na(ID)) -->
 
-```
+<!-- ``` -->
 
-### Poisson
+<!-- ### Poisson -->
 
-```{r poisson glmm preds}
-#build a model to esimate total count from individual sample distribution
-pois_glmm = brm(count ~ litter_days + (1|block),
-                  data = exp_df,
-                  family = poisson(),
-                  # prior = prior(normal(0, 10),
-                                # class = b,
-                                # coef = "Intercept"),
-                  thin = 1,
-                  iter = 1000,
-                  file = here::here("data/models/pois_glmm"),
-                  file_refit = 'on_change',
-                  chains = 4,
-                  cores = 4)
+<!-- ```{r poisson glmm preds} -->
+<!-- #build a model to esimate total count from individual sample distribution -->
+<!-- pois_glmm = brm(count ~ litter_days + (1|block), -->
+<!--                   data = exp_df, -->
+<!--                   family = poisson(), -->
+<!--                   # prior = prior(normal(0, 10), -->
+<!--                                 # class = b, -->
+<!--                                 # coef = "Intercept"), -->
+<!--                   thin = 1, -->
+<!--                   iter = 1000, -->
+<!--                   file = here::here("data/models/pois_glmm"), -->
+<!--                   file_refit = 'on_change', -->
+<!--                   chains = 4, -->
+<!--                   cores = 4) -->
 
-# convert to draws
-pois_glmm_draws = as_draws_df(pois_glmm)
-# transform and sample from Poisson with posterior draws
-pois_glmm_pred = map_dbl(unlist(pois_glmm_draws$b_Intercept),unlist(pois_glmm_draws$b_litter_days), ~sum(rpois(27,exp(.x+.y))))
+<!-- # convert to draws -->
+<!-- pois_glmm_draws = as_draws_df(pois_glmm) -->
+<!-- # transform and sample from Poisson with posterior draws -->
+<!-- pois_glmm_pred = map_dbl(unlist(pois_glmm_draws$b_Intercept),unlist(pois_glmm_draws$b_litter_days), ~sum(rpois(27,exp(.x+.y)))) -->
 
-```
+<!-- ``` -->
 
-```{r pois glmm plot}
+<!-- ```{r pois glmm plot} -->
 
-lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+<!-- lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max -->
 
-poisSimple_accDf = readRDS(here::here("data/poisSimple_accDf.rds")) %>% 
-  merge(count_df, by = 'date', all = TRUE) %>% 
-  select(date, count = "count.y", prediction, lower, upper)
+<!-- poisSimple_accDf = readRDS(here::here("data/poisSimple_accDf.rds")) %>%  -->
+<!--   merge(count_df, by = 'date', all = TRUE) %>%  -->
+<!--   select(date, count = "count.y", prediction, lower, upper) -->
 
-poisSimpleMedian = pois_pred %>% median
+<!-- poisSimpleMedian = pois_pred %>% median -->
 
-poisSimpleInt = pois_pred %>% quantile(c(0.025, 0.975))
+<!-- poisSimpleInt = pois_pred %>% quantile(c(0.025, 0.975)) -->
 
-# add newest prediction into the data.frame
-poisSimple_accDf[(lastVal+1),'prediction'] <- poisSimpleMedian
-poisSimple_accDf[(lastVal+1), 'lower'] <- poisSimpleInt[1]
-poisSimple_accDf[(lastVal+1), 'upper'] <- poisSimpleInt[2]
+<!-- # add newest prediction into the data.frame -->
+<!-- poisSimple_accDf[(lastVal+1),'prediction'] <- poisSimpleMedian -->
+<!-- poisSimple_accDf[(lastVal+1), 'lower'] <- poisSimpleInt[1] -->
+<!-- poisSimple_accDf[(lastVal+1), 'upper'] <- poisSimpleInt[2] -->
 
-#save the dataframe
-saveRDS(poisSimple_accDf, here::here("data/poisSimple_accDf.rds"))
+<!-- #save the dataframe -->
+<!-- saveRDS(poisGLMM_accDf, here::here("data/poisGLMM_accDf.rds")) -->
 
-ylims = c(0, ceiling(max(c(count_df$count, poisSimple_accDf$upper), na.rm = TRUE)/5)*5)
+<!-- ylims = c(0, ceiling(max(c(count_df$count, poisGLMM_accDf$upper), na.rm = TRUE)/5)*5) -->
 
-poisSimple_accDf %>% 
-  ggplot()+
-  geom_line(data = poisSimple_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
-  geom_errorbar(data = poisSimple_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
-  geom_point(data = poisSimple_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
-  geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
-  geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
-  scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
-  scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
-  theme(axis.title.x = element_blank(),
-        legend.position = 'none',
-        axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1),
-        axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0),
-        panel.grid.minor.y = element_blank(),
-        panel.grid.minor.x = element_blank())
+<!-- poisGLMM_accDf %>%  -->
+<!--   ggplot()+ -->
+<!--   geom_line(data = poisGLMM_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+ -->
+<!--   geom_errorbar(data = poisGLMM_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+ -->
+<!--   geom_point(data = poisSLMM_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+ -->
+<!--   geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+ -->
+<!--   geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+ -->
+<!--   scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+ -->
+<!--   scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+ -->
+<!--   theme(axis.title.x = element_blank(), -->
+<!--         legend.position = 'none', -->
+<!--         axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1), -->
+<!--         axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0), -->
+<!--         panel.grid.minor.y = element_blank(), -->
+<!--         panel.grid.minor.x = element_blank()) -->
 
-```
+<!-- ``` -->
 
-```{r pois glmm accuracy}
+<!-- ```{r pois glmm accuracy} -->
 
-poisSimple_accDf %>% 
-  mutate(diff = prediction - count) %>% 
-  filter(!is.na(diff)) %>% 
-  mutate(MAE = sum(abs(diff))/n()) %>% 
-  select(date, diff, MAE) %>% 
-  arrange(MAE) %>% 
-  pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>%
-  relocate(MAE, .after = last_col()) %>% 
-  knitr::kable(caption = "Mean predictive error of a simple Poisson model") %>% 
-  kableExtra::kable_styling(latex_options = 'scale_down')
+<!-- poisGLMM_accDf %>%  -->
+<!--   mutate(diff = prediction - count) %>%  -->
+<!--   filter(!is.na(diff)) %>%  -->
+<!--   mutate(MAE = sum(abs(diff))/n()) %>%  -->
+<!--   select(date, diff, MAE) %>%  -->
+<!--   arrange(MAE) %>%  -->
+<!--   pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>% -->
+<!--   relocate(MAE, .after = last_col()) %>%  -->
+<!--   knitr::kable(caption = "Mean predictive error of a Poisson mixed-model") %>%  -->
+<!--   kableExtra::kable_styling(latex_options = 'scale_down') -->
 
-```
+<!-- ``` -->
 
-### Negative Binomial
+<!-- ### Negative Binomial -->
 
-```{r nb glmm preds}
+<!-- ```{r nb glmm preds} -->
 
-#build a model to esimate total count from individual sample distribution
-nb_simple = brm(count ~ 1,
-                  data = last_counts,
-                  family = negbinomial(),
-                  # prior = prior(normal(0, 3),
-                  #               class = b,
-                  #               coef = "Intercept"),
-                  thin = 1,
-                  iter = 1000,
-                  file = here::here("data/models/nb_simple"),
-                  file_refit = 'on_change',
-                  chains = 4)
+<!-- #build a model to esimate total count from individual sample distribution -->
+<!-- nb_glmm = brm(count ~ litter_days + (1|block), -->
+<!--                   data = last_counts, -->
+<!--                   family = negbinomial(), -->
+<!--                   # prior = prior(normal(0, 3), -->
+<!--                   #               class = b, -->
+<!--                   #               coef = "Intercept"), -->
+<!--                   thin = 1, -->
+<!--                   iter = 1000, -->
+<!--                   file = here::here("data/models/nb_glmm"), -->
+<!--                   file_refit = 'on_change', -->
+<!--                   chains = 4) -->
 
-# convert to draws
-nb_draws = as_draws_df(nb_simple, variable = c('b_Intercept','shape'))
-# transform and sample from Poisson with posterior draws
-nb_pred = map2_dbl(unlist(nb_draws$b_Intercept), unlist(nb_draws$shape), ~sum(rnbinom(27,mu = exp(.x), size = .y)))
+<!-- # convert to draws -->
+<!-- nb_glmm_draws = as_draws_df(nb_glmm) -->
+<!-- # transform and sample from Poisson with posterior draws -->
+<!-- nb_glmm_pred = map2_dbl(unlist(nb_glmm_draws$b_Intercept), unlist(nb_glmm_draws$shape), ~sum(rnbinom(27,mu = exp(.x), size = .y))) -->
 
-```
+<!-- ``` -->
 
-```{r nb glmm plot}
+<!-- ```{r nb glmm plot} -->
 
-lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+<!-- lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max -->
 
-nbSimple_accDf = readRDS(here::here("data/poisSimple_accDf.rds")) %>% 
-  merge(count_df, by = 'date', all = TRUE) %>% 
-  select(date, count = "count.y", prediction, lower, upper)
+<!-- nbGLMM_accDf = readRDS(here::here("data/nbGLMM_accDf.rds")) %>%  -->
+<!--   merge(count_df, by = 'date', all = TRUE) %>%  -->
+<!--   select(date, count = "count.y", prediction, lower, upper) -->
 
-nbSimpleMedian = nb_pred %>% median
+<!-- nbGLMMMedian = nb_glmm_pred %>% median -->
 
-nbSimpleInt = nb_pred %>% quantile(c(0.025, 0.975))
+<!-- nbGLMMInt = nb_glmm_pred %>% quantile(c(0.025, 0.975)) -->
 
-# add newest prediction into the data.frame
-nbSimple_accDf[(lastVal+1),'prediction'] <- nbSimpleMedian
-nbSimple_accDf[(lastVal+1), 'lower'] <- nbSimpleInt[1]
-nbSimple_accDf[(lastVal+1), 'upper'] <- nbSimpleInt[2]
+<!-- # add newest prediction into the data.frame -->
+<!-- nbSimple_accDf[(lastVal+1),'prediction'] <- nbSimpleMedian -->
+<!-- nbSimple_accDf[(lastVal+1), 'lower'] <- nbSimpleInt[1] -->
+<!-- nbSimple_accDf[(lastVal+1), 'upper'] <- nbSimpleInt[2] -->
 
-#save the dataframe
-saveRDS(nbSimple_accDf, here::here("data/nbSimple_accDf.rds"))
+<!-- #save the dataframe -->
+<!-- saveRDS(nbGLMM_accDf, here::here("data/nbGLMM_accDf.rds")) -->
 
-ylims = c(0, ceiling(max(c(count_df$count, nbSimple_accDf$upper), na.rm = TRUE)/5)*5)
+<!-- ylims = c(0, ceiling(max(c(count_df$count, nbGLMM_accDf$upper), na.rm = TRUE)/5)*5) -->
 
-nbSimple_accDf %>% 
-  ggplot()+
-  geom_line(data = nbSimple_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
-  geom_errorbar(data = nbSimple_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
-  geom_point(data = nbSimple_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
-  geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
-  geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
-  scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
-  scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
-  theme(axis.title.x = element_blank(),
-        legend.position = 'none',
-        axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1),
-        axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0),
-        panel.grid.minor.y = element_blank(),
-        panel.grid.minor.x = element_blank())
+<!-- nbSimple_accDf %>%  -->
+<!--   ggplot()+ -->
+<!--   geom_line(data = nbSimple_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+ -->
+<!--   geom_errorbar(data = nbSimple_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+ -->
+<!--   geom_point(data = nbSimple_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+ -->
+<!--   geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+ -->
+<!--   geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+ -->
+<!--   scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+ -->
+<!--   scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+ -->
+<!--   theme(axis.title.x = element_blank(), -->
+<!--         legend.position = 'none', -->
+<!--         axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1), -->
+<!--         axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0), -->
+<!--         panel.grid.minor.y = element_blank(), -->
+<!--         panel.grid.minor.x = element_blank()) -->
 
-```
+<!-- ``` -->
 
-```{r nb glmm accuracy}
+<!-- ```{r nb glmm accuracy} -->
 
-nbSimple_accDf %>% 
-  mutate(diff = prediction - count) %>% 
-  filter(!is.na(diff)) %>% 
-  mutate(MAE = sum(abs(diff))/n()) %>% 
-  select(date, diff, MAE) %>% 
-  arrange(MAE) %>% 
-  pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>%
-  relocate(MAE, .after = last_col()) %>% 
-  knitr::kable(caption = "Mean predictive error of a simple Negative Binomial model") %>% 
-  kableExtra::kable_styling(latex_options = 'scale_down')
+<!-- # nbSimple_accDf %>%  -->
+<!-- #   mutate(diff = prediction - count) %>%  -->
+<!-- #   filter(!is.na(diff)) %>%  -->
+<!-- #   mutate(MAE = sum(abs(diff))/n()) %>%  -->
+<!-- #   select(date, diff, MAE) %>%  -->
+<!-- #   arrange(MAE) %>%  -->
+<!-- #   pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>% -->
+<!-- #   relocate(MAE, .after = last_col()) %>%  -->
+<!-- #   knitr::kable(caption = "Mean predictive error of a simple Negative Binomial model") %>%  -->
+<!-- #   kableExtra::kable_styling(latex_options = 'scale_down') -->
 
-```
+<!-- ``` -->
 
-### GAMM prediction
+<!-- ### GAMM prediction -->
 
-```{r gamm}
+<!-- ```{r gamm} -->
 
-gamm_pred = brm(count ~ s(litter_days, bs = 'tp', k = 5) + s(block, bs = 're', k = 5), 
-                data = exp_df,
-                family = poisson(),
-                iter = 1000,
-                thin = 1,
-                file = here::here("data/models/glmm_pred"),
-                file_refit = "on_change",
-                chain = 4,
-                cores = 4)
+<!-- gamm_pred = brm(count ~ s(litter_days, bs = 'tp', k = 5) + s(block, bs = 're', k = 5),  -->
+<!--                 data = exp_df, -->
+<!--                 family = poisson(), -->
+<!--                 iter = 1000, -->
+<!--                 thin = 1, -->
+<!--                 file = here::here("data/models/glmm_pred"), -->
+<!--                 file_refit = "on_change", -->
+<!--                 chain = 4, -->
+<!--                 cores = 4) -->
 
-y = exp_df %>% mutate(prediction = predict(gamm_pred, newdata = exp_df[,c("litter_days","block")])[1], type = "response")
+<!-- y = exp_df %>% mutate(prediction = predict(gamm_pred, newdata = exp_df[,c("litter_days","block")])[1], type = "response") -->
 
-```
+<!-- ``` -->
 
-```{r gamm plot}
+<!-- ```{r gamm plot} -->
 
+<!-- ``` -->
 
-more forecasts to come???
+<!-- more forecasts to come??? -->
