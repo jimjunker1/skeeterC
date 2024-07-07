@@ -14,7 +14,11 @@ library(here)
 library(kableExtra)
 library(brms)
 library(tidyverse)
+<<<<<<< HEAD
 library(mgcv)
+=======
+
+>>>>>>> 95fc87a3c9e3db2a00cf7de83e2e2e580d2e6e1d
 #
 covInt = function(center = NULL , int = NULL,...){
   # calculate the coverage interval around a value
