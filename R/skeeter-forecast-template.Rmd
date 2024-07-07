@@ -14,7 +14,11 @@ library(here)
 library(kableExtra)
 library(brms)
 library(tidyverse)
+<<<<<<< HEAD
+library(mgcv)
+=======
 
+>>>>>>> 95fc87a3c9e3db2a00cf7de83e2e2e580d2e6e1d
 #
 covInt = function(center = NULL , int = NULL,...){
   # calculate the coverage interval around a value
@@ -26,6 +30,19 @@ covInt = function(center = NULL , int = NULL,...){
   
   return(list(lower = lower,
               upper = upper))
+}
+
+
+split_kable <- function(df, index, n_tb = 2, digits = 3,...) {
+  nn <- dim(df)[1]
+  end <- 0
+  for (i in 1 : index){
+    start <- end + 1
+    rem <- nn - start + 1
+    end <- start + ceiling(rem / (n_tb - i + 1)) - 1
+  }
+  tb <- dplyr::slice(df, start : end)
+  return(knitr::kable(tb, digits = digits,...))
 }
 ## set options
 options(mc.cores = parallel::detectCores())
@@ -129,7 +146,7 @@ where, $y_i$ is the prediction, $x_i$ is the observed value, and $n$ is the numb
 
 ```{r rankings table}
 # create prediction accuracy table
-pred_accDf = pred_plotDf %>% 
+pred_plotDf %>% 
   left_join(count_df, by = 'date') %>% 
   mutate(diff = prediction - count) %>% 
   filter(!is.na(diff)) %>% 
@@ -138,10 +155,11 @@ pred_accDf = pred_plotDf %>%
   select(name, date, diff, MAE) %>% 
   arrange(MAE) %>% 
   pivot_wider(id_cols = c(name, MAE), names_from = 'date', values_from = 'diff') %>%
-  relocate(MAE, .after = last_col())
-  
-knitr::kable(pred_accDf, caption = "The rankings to date are:") %>% 
+  relocate(MAE, .after = last_col()) %>% 
+  knitr::kable(digits = 2, caption = "The rankings to date are:") %>%
   kableExtra::kable_styling(latex_options = 'scale_down')
+# split_kable(pred_accDf, index = 1, n_tb=1, caption = "The rankings to date are:")
+
 ```
 
 ### Cumulative patterns
@@ -223,7 +241,7 @@ lastVal_accDf = lastVal_accDf %>% merge(lastVal_pred, by = 'date', all = TRUE) %
 
 saveRDS(lastVal_accDf, here::here("data/lastVal_accDf.rds"))
   
-  lastVal_accDf %>% 
+lastVal_accDf %>% 
   mutate(diff = prediction - count) %>% 
   filter(!is.na(diff)) %>% 
   mutate(MAE = sum(abs(diff))/n()) %>% 
@@ -231,6 +249,7 @@ saveRDS(lastVal_accDf, here::here("data/lastVal_accDf.rds"))
   arrange(MAE) %>% 
   pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>%
   relocate(MAE, .after = last_col()) %>% 
+  t() %>% 
   knitr::kable(caption = "Mean predictive deviation of last value approach") %>% 
   kableExtra::kable_styling(latex_options = 'scale_down')
 
@@ -290,6 +309,7 @@ globAvg_accDf %>%
   arrange(MAE) %>% 
   pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>%
   relocate(MAE, .after = last_col()) %>% 
+  t() %>% 
   knitr::kable(caption = "Mean predictive deviation of global average approach") %>% 
   kableExtra::kable_styling(latex_options = 'scale_down')
 
@@ -398,9 +418,369 @@ poisSimple_accDf %>%
   arrange(MAE) %>% 
   pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>%
   relocate(MAE, .after = last_col()) %>% 
+  t() %>% 
   knitr::kable(caption = "Mean predictive error of a simple Poisson model") %>% 
   kableExtra::kable_styling(latex_options = 'scale_down')
 
 ```
+
+### Negative Binomial
+
+```{r nb preds}
+
+#build a model to esimate total count from individual sample distribution
+nb_simple = brm(count ~ 1,
+                  data = last_counts,
+                  family = negbinomial(),
+                  thin = 1,
+                  iter = 1000,
+                  file = here::here("data/models/nb_simple"),
+                  file_refit = 'on_change',
+                  chains = 4,
+                  cores = 4)
+
+# convert to draws
+nb_draws = as_draws_df(nb_simple, variable = c('b_Intercept','shape'))
+# transform and sample from Poisson with posterior draws
+nb_pred = map2_dbl(unlist(nb_draws$b_Intercept), unlist(nb_draws$shape), ~sum(rnbinom(27,mu = exp(.x), size = .y)))
+
+```
+
+```{r nb simple plot}
+
+lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+
+nbSimple_accDf = readRDS(here::here("data/nbSimple_accDf.rds")) %>% 
+  merge(count_df, by = 'date', all = TRUE) %>% 
+  select(date, count = "count.y", prediction, lower, upper)
+
+nbSimpleMedian = nb_pred %>% median
+
+nbSimpleInt = nb_pred %>% quantile(c(0.025, 0.975))
+
+# add newest prediction into the data.frame
+nbSimple_accDf[(lastVal+1),'prediction'] <- nbSimpleMedian
+nbSimple_accDf[(lastVal+1), 'lower'] <- nbSimpleInt[1]
+nbSimple_accDf[(lastVal+1), 'upper'] <- nbSimpleInt[2]
+
+#save the dataframe
+saveRDS(nbSimple_accDf, here::here("data/nbSimple_accDf.rds"))
+
+ylims = c(0, ceiling(max(c(count_df$count, nbSimple_accDf$upper), na.rm = TRUE)/5)*5)
+
+nbSimple_accDf %>% 
+  ggplot()+
+  geom_line(data = nbSimple_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
+  geom_errorbar(data = nbSimple_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
+  geom_point(data = nbSimple_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
+  geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
+  geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
+  scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
+  scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
+  theme(axis.title.x = element_blank(),
+        legend.position = 'none',
+        axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1),
+        axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.minor.x = element_blank())
+
+```
+
+```{r nb simple accuracy}
+
+nbSimple_accDf %>% 
+  mutate(diff = prediction - count) %>% 
+  filter(!is.na(diff)) %>% 
+  mutate(MAE = sum(abs(diff))/n()) %>% 
+  select(date, diff, MAE) %>% 
+  arrange(MAE) %>% 
+  pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>%
+  relocate(MAE, .after = last_col()) %>% 
+  t() %>% 
+  knitr::kable(caption = "Mean predictive error of a simple Negative Binomial model") %>% 
+  kableExtra::kable_styling(latex_options = 'scale_down')
+
+```
+
+## Using our experimental design for prediction of skeeter rafts
+
+```{r experiment df}
+
+ exp_df = raft_data %>%  
+   select(-Mean, -Cumulative) %>%  
+   pivot_longer(-ID, names_to = 'date', values_to = 'count') %>%  
+   rowwise %>%  
+   mutate(date = as.Date(date), 
+          block = str_replace_all(ID, "(B\\d{1})_M\\w{1}_D$","\\1"), 
+          block = ifelse(grepl("^BC_.*$", ID, ignore.case = TRUE),  
+                         str_replace_all(ID, "(BC)_M\\d{1}_D$","\\1"), 
+                         block), 
+          txt = str_replace_all(ID, "B\\d{1}_(\\M\\w{1})_D$","\\1"),
+          txt = ifelse(grepl("^BC_.*$",ID,ignore.case = TRUE),
+                             "MC",txt),
+          days = as.numeric(date - as.Date("2024-06-26")), 
+          litter_days = ifelse(txt == "MA", date - as.Date("2024-06-26"), ifelse(txt == "MB", date - as.Date("2024-06-30"), 0))) %>% 
+   mutate(litter_days = ifelse(litter_days < 0,0,litter_days)) %>%
+   filter(!is.na(ID)) 
+
+```
+
+### Poisson
+
+```{r poisson glmm preds}
+#build a model to esimate total count from individual sample distribution
+pois_glmm = brm(count ~ litter_days + (1|block),
+                  data = exp_df,
+                  family = poisson(),
+                  thin = 1,
+                  iter = 1000,
+                  file = here::here("data/models/pois_glmm"),
+                  file_refit = 'on_change',
+                  chains = 4,
+                  cores = 4)
+
+# convert to draws
+pois_glmm_draws = as_draws_df(pois_glmm)
+# transform and sample from Poisson with posterior draws
+pois_glmm_pred = as.data.frame(predict(pois_glmm, newdata = exp_df[,c("litter_days","block")], interval = "prediction", ndraws = 1000)) %>% 
+  bind_cols(exp_df,.)%>% select(-Est.Error) %>% 
+  group_by(date) %>% 
+  summarise(count = sum(count, na.rm =TRUE),
+            prediction = sum(Estimate, na.rm = TRUE),
+            lower = sum(Q2.5, na.rm = TRUE),
+            upper = sum(Q97.5, na.rm = TRUE))
+
+```
+
+```{r pois glmm plot}
+
+lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+
+poisGLMM_accDf = readRDS(here::here("data/poisGLMM_accDf.rds")) %>%
+  merge(count_df, by = 'date', all = TRUE) %>%
+  select(date, count = "count.y", prediction, lower, upper) %>% 
+  mutate(prediction = ifelse(date > as.Date(current_date), NA, prediction),
+         lower = ifelse(date > as.Date(current_date), NA, lower),
+         upper = ifelse(date > as.Date(current_date), NA, upper))
+
+poisGLMMMedian = pois_glmm_pred %>% filter(date == as.Date(current_date)+1) %>% select(prediction) %>% unlist
+# 
+poisGLMMInt = pois_glmm_pred %>% filter(date == as.Date(current_date)+1) %>% select(lower,upper) %>% unlist
+
+# add newest prediction into the data.frame
+poisGLMM_accDf[(lastVal+1),'prediction'] <- poisGLMMMedian
+poisGLMM_accDf[(lastVal+1), 'lower'] <- poisGLMMInt[1]
+poisGLMM_accDf[(lastVal+1), 'upper'] <- poisGLMMInt[2]
+
+#save the dataframe
+saveRDS(poisGLMM_accDf, here::here("data/poisGLMM_accDf.rds"))
+
+ylims = c(0, ceiling(max(c(count_df$count, poisGLMM_accDf$upper), na.rm = TRUE)/5)*5)
+
+poisGLMM_accDf %>%
+  ggplot()+
+  geom_line(data = poisGLMM_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
+  geom_errorbar(data = poisGLMM_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
+  geom_point(data = poisGLMM_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
+  geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
+  geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
+  scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
+  scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
+  theme(axis.title.x = element_blank(),
+        legend.position = 'none',
+        axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1),
+        axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.minor.x = element_blank())
+
+```
+
+```{r pois glmm accuracy}
+
+poisGLMM_accDf %>%
+  mutate(diff = prediction - count) %>%
+  filter(!is.na(diff)) %>%
+  mutate(MAE = sum(abs(diff))/n()) %>%
+  select(date, diff, MAE) %>%
+  arrange(MAE) %>%
+  pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>%
+  relocate(MAE, .after = last_col()) %>%
+  t() %>% 
+  knitr::kable(caption = "Mean predictive error of a Poisson mixed-model") %>%
+  kableExtra::kable_styling(latex_options = 'scale_down')
+
+```
+
+### Negative Binomial
+
+```{r nb glmm preds}
+
+#build a model to esimate total count from individual sample distribution
+nb_glmm = brm(count ~ litter_days + (1|block),
+                  data = exp_df,
+                  family = negbinomial(),
+                  thin = 1,
+                  iter = 1000,
+                  file = here::here("data/models/nb_glmm"),
+                  file_refit = 'on_change',
+                  chains = 4,
+                  cores = 4)
+
+# convert to draws
+nb_glmm_draws = as_draws_df(nb_glmm)
+# transform and sample from Poisson with posterior draws
+nb_glmm_pred = as.data.frame(predict(nb_glmm, newdata = exp_df[,c("litter_days","block")], interval = "prediction", ndraws = 1000)) %>% 
+  bind_cols(exp_df,.)%>% select(-Est.Error) %>% 
+  group_by(date) %>% 
+  summarise(count = sum(count, na.rm =TRUE),
+            prediction = sum(Estimate, na.rm = TRUE),
+            lower = sum(Q2.5, na.rm = TRUE),
+            upper = sum(Q97.5, na.rm = TRUE))
+
+```
+
+```{r nb glmm plot}
+
+lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+
+nbGLMM_accDf = readRDS(here::here("data/nbGLMM_accDf.rds")) %>%
+  merge(count_df, by = 'date', all = TRUE) %>%
+  select(date, count = "count.y", prediction, lower, upper) %>% 
+  mutate(prediction = ifelse(date > as.Date(current_date), NA, prediction),
+         lower = ifelse(date > as.Date(current_date), NA, lower),
+         upper = ifelse(date > as.Date(current_date), NA, upper))
+
+nbGLMMMedian = nb_glmm_pred %>% filter(date == as.Date(current_date)+1) %>% select(prediction) %>% unlist
+
+nbGLMMInt = nb_glmm_pred %>% filter(date == as.Date(current_date)+1) %>% select(lower,upper) %>% unlist
+
+# add newest prediction into the data.frame
+nbGLMM_accDf[(lastVal+1),'prediction'] <- nbGLMMMedian
+nbGLMM_accDf[(lastVal+1), 'lower'] <- nbGLMMInt[1]
+nbGLMM_accDf[(lastVal+1), 'upper'] <- nbGLMMInt[2]
+
+#save the dataframe
+saveRDS(nbGLMM_accDf, here::here("data/nbGLMM_accDf.rds"))
+
+ylims = c(0, ceiling(max(c(count_df$count, nbGLMM_accDf$upper), na.rm = TRUE)/5)*5)
+
+nbGLMM_accDf %>%
+  ggplot()+
+  geom_line(data = nbGLMM_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
+  geom_errorbar(data = nbGLMM_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
+  geom_point(data = nbGLMM_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
+  geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
+  geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
+  scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
+  scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
+  theme(axis.title.x = element_blank(),
+        legend.position = 'none',
+        axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1),
+        axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.minor.x = element_blank())
+
+```
+
+```{r nb glmm accuracy}
+
+nbGLMM_accDf %>%
+  mutate(diff = prediction - count) %>%
+  filter(!is.na(diff)) %>%
+  mutate(MAE = sum(abs(diff))/n()) %>%
+  select(date, diff, MAE) %>%
+  arrange(MAE) %>%
+  pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>%
+  relocate(MAE, .after = last_col()) %>%
+  t() %>% 
+  knitr::kable(caption = "Mean predictive error of a hierarchical Negative Binomial model") %>%
+  kableExtra::kable_styling(latex_options = 'scale_down')
+
+```
+
+### GAMM prediction
+
+```{r pois gamm}
+
+pois_gamm = brm(count ~ s(litter_days, bs = 'tp', k = 5) + s(block, bs = 're', k = 5),
+                data = exp_df,
+                family = poisson(),
+                iter = 1000,
+                thin = 1,
+                file = here::here("data/models/pois_gamm"),
+                file_refit = "on_change",
+                chain = 4,
+                cores = 4)
+
+pois_gamm_pred = as.data.frame(predict(pois_gamm, newdata = exp_df[,c("litter_days","block")], interval = "prediction", ndraws = 1000)) %>% 
+  bind_cols(exp_df,.)%>% select(-Est.Error) %>% 
+  group_by(date) %>% 
+  summarise(count = sum(count, na.rm =TRUE),
+            prediction = sum(Estimate, na.rm = TRUE),
+            lower = sum(Q2.5, na.rm = TRUE),
+            upper = sum(Q97.5, na.rm = TRUE))
+
+```
+
+
+```{r pois gamm plot}
+
+lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+
+poisGAMM_accDf = readRDS(here::here("data/poisGAMM_accDf.rds")) %>%
+  merge(count_df, by = 'date', all = TRUE) %>%
+  select(date, count = "count.y", prediction, lower, upper) %>% 
+  mutate(prediction = ifelse(date > as.Date(current_date), NA, prediction),
+         lower = ifelse(date > as.Date(current_date), NA, lower),
+         upper = ifelse(date > as.Date(current_date), NA, upper))
+
+poisGAMMMedian = pois_gamm_pred %>% filter(date == as.Date(current_date)+1) %>% select(prediction) %>% unlist
+
+poisGAMMInt = pois_gamm_pred %>% filter(date == as.Date(current_date)+1) %>% select(lower,upper) %>% unlist
+
+# add newest prediction into the data.frame
+poisGAMM_accDf[(lastVal+1),'prediction'] <- poisGAMMMedian
+poisGAMM_accDf[(lastVal+1), 'lower'] <- poisGAMMInt[1]
+poisGAMM_accDf[(lastVal+1), 'upper'] <- poisGAMMInt[2]
+
+#save the dataframe
+saveRDS(poisGAMM_accDf, here::here("data/poisGAMM_accDf.rds"))
+
+ylims = c(0, ceiling(max(c(count_df$count, poisGAMM_accDf$upper), na.rm = TRUE)/5)*5)
+
+poisGAMM_accDf %>%
+  ggplot()+
+  geom_line(data = poisGAMM_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
+  geom_errorbar(data = poisGAMM_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
+  geom_point(data = poisGAMM_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
+  geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
+  geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
+  scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
+  scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
+  theme(axis.title.x = element_blank(),
+        legend.position = 'none',
+        axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1),
+        axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.minor.x = element_blank())
+
+```
+
+```{r pois gamm accuracy}
+
+poisGAMM_accDf %>%
+  mutate(diff = prediction - count) %>%
+  filter(!is.na(diff)) %>%
+  mutate(MAE = sum(abs(diff))/n()) %>%
+  select(date, diff, MAE) %>%
+  arrange(MAE) %>%
+  pivot_wider(id_cols = MAE, names_from = 'date', values_from = 'diff') %>%
+  relocate(MAE, .after = last_col()) %>%
+  t() %>% 
+  knitr::kable(caption = "Mean predictive error of a hierarchical poisson genearl additive model") %>%
+  kableExtra::kable_styling(latex_options = 'scale_down')
+
+```
+
 
 more forecasts to come???
