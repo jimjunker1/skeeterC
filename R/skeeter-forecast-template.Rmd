@@ -326,9 +326,15 @@ last_counts = raft_data %>%
 
 colnames(last_counts) <- 'count'
 
-norm_pars = fitdist(last_counts$count, 'norm', 'mle')[['estimate']]
-pois_pars = fitdist(last_counts$count, 'pois', 'mle')[['estimate']]
-negbin_pars = fitdist(last_counts$count, 'nbinom', 'mle')[['estimate']]
+norm_pars = tryCatch({
+  fitdist(last_counts$count, 'norm', 'mle')[['estimate']]},
+  error = function(e){NA})
+pois_pars = tryCatch({
+  fitdist(last_counts$count, 'pois', 'mle')[['estimate']]},
+  error = function(e){NA})
+negbin_pars = tryCatch({
+  fitdist(last_counts$count, 'nbinom', 'mle')[['estimate']]},
+  error = function(e){NA})
 
 ggplot()+
   geom_density(data = data.frame(count = rnorm(1e3, mean = norm_pars['mean'], norm_pars['sd'])), aes(x = count, after_stat(ndensity)), linewidth = 1.1, color = 'black')+
