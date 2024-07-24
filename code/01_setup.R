@@ -26,7 +26,7 @@ read_miniDOT = function(x, list = FALSE,...){
 }
 ## set options
 options(mc.cores = parallel::detectCores())
-
+theme_set(theme_minimal())
 ## user setting
 raft_filepath = sprintf("C:/Users/%s/OneDrive - UNT System/AERI Seed Insect Carbon/Data/2024_aeri_seed_mosquito_data.xlsx", Sys.info()[['user']])
 

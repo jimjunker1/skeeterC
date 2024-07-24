@@ -35,5 +35,13 @@ logger_df = logger_filepath%>%
   bind_rows(.id = "loggerID") %>%
   left_join(logger_meta %>% select(loggerID = 'logger id', block, mesocosm, treatment),., by = "loggerID")
 
+## DO plots
 
+logger_df %>%
+  select(loggerID, treatment, time = `Central Standard Time (none)`, do = `Dissolved Oxygen Saturation (%)` ) %>%
+  filter(!is.na(do)) %>%
+  ggplot()+
+  geom_line(aes(x = time, y = do, group = loggerID, color = loggerID))+
+  facet_wrap(~treatment)+
+  theme(legend.position = 'none')
 
