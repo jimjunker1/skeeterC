@@ -35,13 +35,65 @@ logger_df = logger_filepath%>%
   bind_rows(.id = "loggerID") %>%
   left_join(logger_meta %>% select(loggerID = 'logger id', block, mesocosm, treatment),., by = "loggerID")
 
+## DO sat plots
+
+logger_df %>%
+  select(loggerID, treatment, time = `Central Standard Time (none)`, do_sat = `Dissolved Oxygen Saturation (%)` ) %>%
+  filter(!is.na(do_sat)) %>%
+  ggplot()+
+  geom_line(aes(x = time, y = do_sat, group = loggerID, color = loggerID))+
+  facet_wrap(~treatment)+
+  theme(legend.position = 'none')
+
 ## DO plots
 
 logger_df %>%
-  select(loggerID, treatment, time = `Central Standard Time (none)`, do = `Dissolved Oxygen Saturation (%)` ) %>%
+  select(loggerID, treatment, time = `Central Standard Time (none)`, do = `Dissolved Oxygen (mg/l)` ) %>%
   filter(!is.na(do)) %>%
   ggplot()+
   geom_line(aes(x = time, y = do, group = loggerID, color = loggerID))+
   facet_wrap(~treatment)+
   theme(legend.position = 'none')
+
+## temp plots
+
+logger_df %>%
+  select(loggerID, treatment, time = `Central Standard Time (none)`, do = `Dissolved Oxygen Saturation (%)`,
+         temp = `Temperature (deg C)`) %>%
+  filter(!is.na(do)) %>%
+  ggplot()+
+  geom_line(aes(x = time, y = temp, group = loggerID, color = loggerID))+
+  facet_wrap(~treatment)+
+  theme(legend.position = 'none')
+
+# calculate metabolism
+
+working_loggerID = "026311"
+
+# clean timeseries to deployment time
+
+ts026311 = logger_df %>%
+  filter(loggerID %in% working_loggerID,
+         between(`Central Standard Time (none)`,
+                 as.POSIXct(unlist(logger_meta[which(logger_meta$`logger id` == working_loggerID), 'deploy'])), as.POSIXct("2024-07-22 18:00:00"))) %>%
+  select(loggerID, block, treatment, time = `Central Standard Time (none)`,
+         temp = `Temperature (deg C)`,
+         do_mgL = `Dissolved Oxygen (mg/l)`,
+         do_sat = `Dissolved Oxygen Saturation (%)`) %>%
+  mutate(depth = 11.5)
+
+# estimate k time series
+k600_cole = k.cole(ts026311 %>% select(datetime = "time") %>% mutate(wnd = 5))
+k.gas = k600.2.kGAS.base(k600_cole$wnd, ts026311$temp, 'O2')
+
+do_sat = o2.at.sat.base(ts026311$temp, 201)
+
+irr = streamMetabolizer::calc_light()
+
+metab026311 <- metab.bookkeep(ts026311$do_mgL,
+                              do.sat = do_sat,
+                              k.gas = k.gas,
+                              ts026311$time)
+
+
 
