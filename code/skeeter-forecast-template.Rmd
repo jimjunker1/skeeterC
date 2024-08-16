@@ -5,7 +5,7 @@ output: pdf_document
 
 ```{r initiate, echo=FALSE, message=FALSE, warning=FALSE}
 # set rmarkdown options
-here::i_am("R/skeeter-forecast-template.Rmd")
+here::i_am("code/skeeter-forecast-template.Rmd")
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 ## get data
 library(fitdistrplus)
@@ -60,7 +60,7 @@ raft_data = readxl::read_excel(raft_filepath) %>%
 # identify columns with numbers
 raftNumCols = names(raft_data) %>% as.numeric %>% is.na %>% `!`
 
-# rename cols to readible dates
+# rename cols to readable dates
 raft_data = raft_data %>%
   rename_with(~as.character(openxlsx::convertToDate(.x, origin='1900-01-01')), .cols = names(.)[raftNumCols]) %>% 
   filter(!is.na(ID))
@@ -75,10 +75,10 @@ pred_data = pred_data %>%
   mutate(across(-c(name), as.numeric))
 
 # count_vec = readxl::read_excel(pred_filepath)%>% filter(name == 'Total')
-count_df = raft_data %>% select(which(raftNumCols)) %>% colSums(na.rm = FALSE) %>% enframe(name = 'date', value = 'count') %>% 
+count_df = raft_data %>% select(which(raftNumCols)) %>% colSums(na.rm = TRUE) %>% enframe(name = 'date', value = 'count') %>% 
   mutate(date = as.Date(date))
 
-current_date = as.character(Sys.Date())
+current_date = ifelse(Sys.Date() > as.Date("2024-07-13"), as.character("2024-07-13"), as.character(Sys.Date()))
 
 name_df = c('GD' = 'Grace',
             'AM' = 'Arya',
