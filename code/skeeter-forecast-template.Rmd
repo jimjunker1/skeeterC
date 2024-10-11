@@ -38,7 +38,7 @@ split_kable <- function(df, index, n_tb = 2, digits = 3,...) {
     rem <- nn - start + 1
     end <- start + ceiling(rem / (n_tb - i + 1)) - 1
   }
-  tb <- dplyr::slice(df, start : end)
+  tb <- dplyr::slice(df, start : end, .preserve = TRUE)
   return(knitr::kable(tb, digits = digits,...))
 }
 ## set options
@@ -142,7 +142,22 @@ where, $y_i$ is the prediction, $x_i$ is the observed value, and $n$ is the numb
 ### Rankings
 
 ```{r rankings table}
+date_vars = pred_plotDf$date %>% unique %>% as.character %>% .[-1]
 # create prediction accuracy table
+# pred_plotDf %>% 
+#   left_join(count_df, by = 'date') %>% 
+#   mutate(diff = prediction - count) %>% 
+#   filter(!is.na(diff)) %>% 
+#   group_by(name) %>% 
+#   mutate(MAE = sum(abs(diff))/n()) %>% 
+#   select(name, date, diff, MAE) %>% 
+#   arrange(MAE, date) %>% 
+#   pivot_wider(id_cols = c(name, MAE), names_from = 'date', values_from = 'diff') %>%
+#   select(name, !!!date_vars, MAE) %>% 
+#   # relocate(MAE, .after = last_col()) %>% 
+#   knitr::kable(digits = 2, caption = "The rankings to date are:") %>%
+#   kableExtra::kable_styling(latex_options = 'scale_down')
+
 pred_plotDf %>% 
   left_join(count_df, by = 'date') %>% 
   mutate(diff = prediction - count) %>% 
@@ -150,12 +165,11 @@ pred_plotDf %>%
   group_by(name) %>% 
   mutate(MAE = sum(abs(diff))/n()) %>% 
   select(name, date, diff, MAE) %>% 
-  arrange(MAE) %>% 
   pivot_wider(id_cols = c(name, MAE), names_from = 'date', values_from = 'diff') %>%
-  relocate(MAE, .after = last_col()) %>% 
-  knitr::kable(digits = 2, caption = "The rankings to date are:") %>%
-  kableExtra::kable_styling(latex_options = 'scale_down')
-# split_kable(pred_accDf, index = 1, n_tb=1, caption = "The rankings to date are:")
+  select(name, !!!date_vars, MAE) %>% 
+  arrange(MAE, .by_group = FALSE) %>% 
+   knitr::kable(digits = 2, caption = "The rankings to date are:") 
+# split_kable(., index = 1, n_tb=1, caption = "The rankings to date are:", digits = 2 )
 
 ```
 
@@ -227,7 +241,7 @@ lastVal_accDf = readRDS(here::here("data/lastVal_accDf.rds")) %>%
   merge(count_df, by = 'date', all = TRUE) %>% 
   select(date, count = "count.y", prediction)
 
-lastVal = count_df %>% ungroup %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+lastVal = min(count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max,16)
 
 lastVal_pred = 
 count_df[c(lastVal, lastVal+1),] %>% fill(count,.direction = 'down') %>% slice_tail(n = 1) %>% rename(prediction = 'count')
@@ -258,7 +272,7 @@ Another simple prediction is to use the global average. This method allows for a
 
 ```{r global average}
 
-lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+lastVal = min(count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max,16)
 
 globAvg_accDf = readRDS(here::here("data/globAvg_accDf.rds")) %>% 
   merge(count_df, by = 'date', all = TRUE) %>% 
@@ -280,9 +294,9 @@ ylims = c(0, ceiling(max(c(count_df$count, globAvg_accDf$upper), na.rm = TRUE)/5
 
 globAvg_accDf %>% 
   ggplot()+
-  geom_line(data = globAvg_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
-  geom_errorbar(data = globAvg_accDf [(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
-  geom_point(data = globAvg_accDf [(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
+  geom_line(data = globAvg_accDf %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
+  geom_errorbar(data = globAvg_accDf  , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
+  geom_point(data = globAvg_accDf, aes(x = date, y = prediction), size = 2, color = 'grey')+
   geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
   geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
   scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
@@ -373,7 +387,7 @@ pois_pred = map_dbl(unlist(pois_draws$b_Intercept), ~sum(rpois(27,exp(.x))))
 
 ```{r pois simple plot}
 
-lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+lastVal = min(count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max,16)
 
 poisSimple_accDf = readRDS(here::here("data/poisSimple_accDf.rds")) %>% 
   merge(count_df, by = 'date', all = TRUE) %>% 
@@ -395,9 +409,9 @@ ylims = c(0, ceiling(max(c(count_df$count, poisSimple_accDf$upper), na.rm = TRUE
 
 poisSimple_accDf %>% 
   ggplot()+
-  geom_line(data = poisSimple_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
-  geom_errorbar(data = poisSimple_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
-  geom_point(data = poisSimple_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
+  geom_line(data = poisSimple_accDf %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
+  geom_errorbar(data = poisSimple_accDf , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
+  geom_point(data = poisSimple_accDf, aes(x = date, y = prediction), size = 2, color = 'grey')+
   geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
   geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
   scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
@@ -451,7 +465,7 @@ nb_pred = map2_dbl(unlist(nb_draws$b_Intercept), unlist(nb_draws$shape), ~sum(rn
 
 ```{r nb simple plot}
 
-lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+lastVal = min(count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max,16)
 
 nbSimple_accDf = readRDS(here::here("data/nbSimple_accDf.rds")) %>% 
   merge(count_df, by = 'date', all = TRUE) %>% 
@@ -473,9 +487,9 @@ ylims = c(0, ceiling(max(c(count_df$count, nbSimple_accDf$upper), na.rm = TRUE)/
 
 nbSimple_accDf %>% 
   ggplot()+
-  geom_line(data = nbSimple_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
-  geom_errorbar(data = nbSimple_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
-  geom_point(data = nbSimple_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
+  geom_line(data = nbSimple_accDf %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
+  geom_errorbar(data = nbSimple_accDf , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
+  geom_point(data = nbSimple_accDf, aes(x = date, y = prediction), size = 2, color = 'grey')+
   geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
   geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
   scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
@@ -557,7 +571,7 @@ pois_glmm_pred = as.data.frame(predict(pois_glmm, newdata = exp_df[,c("litter_da
 
 ```{r pois glmm plot}
 
-lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+lastVal = min(count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max,16)
 
 poisGLMM_accDf = readRDS(here::here("data/poisGLMM_accDf.rds")) %>%
   merge(count_df, by = 'date', all = TRUE) %>%
@@ -566,9 +580,9 @@ poisGLMM_accDf = readRDS(here::here("data/poisGLMM_accDf.rds")) %>%
          lower = ifelse(date > as.Date(current_date), NA, lower),
          upper = ifelse(date > as.Date(current_date), NA, upper))
 
-poisGLMMMedian = pois_glmm_pred %>% filter(date == as.Date(current_date)+1) %>% select(prediction) %>% unlist
+poisGLMMMedian = pois_glmm_pred %>% filter(date == min(as.Date(current_date)+1,as.Date("2024-07-13"))) %>% select(prediction) %>% unlist
 # 
-poisGLMMInt = pois_glmm_pred %>% filter(date == as.Date(current_date)+1) %>% select(lower,upper) %>% unlist
+poisGLMMInt = pois_glmm_pred %>% filter(date == min(as.Date(current_date)+1,as.Date("2024-07-13"))) %>% select(lower,upper) %>% unlist
 
 # add newest prediction into the data.frame
 poisGLMM_accDf[(lastVal+1),'prediction'] <- poisGLMMMedian
@@ -582,9 +596,9 @@ ylims = c(0, ceiling(max(c(count_df$count, poisGLMM_accDf$upper), na.rm = TRUE)/
 
 poisGLMM_accDf %>%
   ggplot()+
-  geom_line(data = poisGLMM_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
-  geom_errorbar(data = poisGLMM_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
-  geom_point(data = poisGLMM_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
+  geom_line(data = poisGLMM_accDf %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
+  geom_errorbar(data = poisGLMM_accDf , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
+  geom_point(data = poisGLMM_accDf, aes(x = date, y = prediction), size = 2, color = 'grey')+
   geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
   geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
   scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
@@ -644,7 +658,7 @@ nb_glmm_pred = as.data.frame(predict(nb_glmm, newdata = exp_df[,c("litter_days",
 
 ```{r nb glmm plot}
 
-lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+lastVal = min(count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max,16)
 
 nbGLMM_accDf = readRDS(here::here("data/nbGLMM_accDf.rds")) %>%
   merge(count_df, by = 'date', all = TRUE) %>%
@@ -653,9 +667,9 @@ nbGLMM_accDf = readRDS(here::here("data/nbGLMM_accDf.rds")) %>%
          lower = ifelse(date > as.Date(current_date), NA, lower),
          upper = ifelse(date > as.Date(current_date), NA, upper))
 
-nbGLMMMedian = nb_glmm_pred %>% filter(date == as.Date(current_date)+1) %>% select(prediction) %>% unlist
+nbGLMMMedian = nb_glmm_pred %>% filter(date == min(as.Date(current_date)+1,as.Date("2024-07-13"))) %>% select(prediction) %>% unlist
 
-nbGLMMInt = nb_glmm_pred %>% filter(date == as.Date(current_date)+1) %>% select(lower,upper) %>% unlist
+nbGLMMInt = nb_glmm_pred %>% filter(date == min(as.Date(current_date)+1,as.Date("2024-07-13"))) %>% select(lower,upper) %>% unlist
 
 # add newest prediction into the data.frame
 nbGLMM_accDf[(lastVal+1),'prediction'] <- nbGLMMMedian
@@ -669,9 +683,9 @@ ylims = c(0, ceiling(max(c(count_df$count, nbGLMM_accDf$upper), na.rm = TRUE)/5)
 
 nbGLMM_accDf %>%
   ggplot()+
-  geom_line(data = nbGLMM_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
-  geom_errorbar(data = nbGLMM_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
-  geom_point(data = nbGLMM_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
+  geom_line(data = nbGLMM_accDf %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
+  geom_errorbar(data = nbGLMM_accDf , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
+  geom_point(data = nbGLMM_accDf, aes(x = date, y = prediction), size = 2, color = 'grey')+
   geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
   geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
   scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
@@ -728,7 +742,7 @@ pois_gamm_pred = as.data.frame(predict(pois_gamm, newdata = exp_df[,c("litter_da
 
 ```{r pois gamm plot}
 
-lastVal = count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max
+lastVal = min(count_df %>% select(count) %>% unlist %>% is.na %>% `!` %>% which %>% max,16)
 
 poisGAMM_accDf = readRDS(here::here("data/poisGAMM_accDf.rds")) %>%
   merge(count_df, by = 'date', all = TRUE) %>%
@@ -737,9 +751,9 @@ poisGAMM_accDf = readRDS(here::here("data/poisGAMM_accDf.rds")) %>%
          lower = ifelse(date > as.Date(current_date), NA, lower),
          upper = ifelse(date > as.Date(current_date), NA, upper))
 
-poisGAMMMedian = pois_gamm_pred %>% filter(date == as.Date(current_date)+1) %>% select(prediction) %>% unlist
+poisGAMMMedian = pois_gamm_pred %>% filter(date == min(as.Date(current_date)+1,as.Date("2024-07-13"))) %>% select(prediction) %>% unlist
 
-poisGAMMInt = pois_gamm_pred %>% filter(date == as.Date(current_date)+1) %>% select(lower,upper) %>% unlist
+poisGAMMInt = pois_gamm_pred %>% filter(date == min(as.Date(current_date)+1,as.Date("2024-07-13"))) %>% select(lower,upper) %>% unlist
 
 # add newest prediction into the data.frame
 poisGAMM_accDf[(lastVal+1),'prediction'] <- poisGAMMMedian
@@ -753,9 +767,9 @@ ylims = c(0, ceiling(max(c(count_df$count, poisGAMM_accDf$upper), na.rm = TRUE)/
 
 poisGAMM_accDf %>%
   ggplot()+
-  geom_line(data = poisGAMM_accDf[c(lastVal,lastVal+1),] %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
-  geom_errorbar(data = poisGAMM_accDf[(lastVal+1),] , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
-  geom_point(data = poisGAMM_accDf[(lastVal+1),], aes(x = date, y = prediction), size = 2, color = 'grey')+
+  geom_line(data = poisGAMM_accDf %>% mutate(count = coalesce(count, prediction)), aes(x = date, y = count), linewidth = 1, color = 'grey')+
+  geom_errorbar(data = poisGAMM_accDf , aes(x = date, ymin = lower, ymax = upper), linewidth = 1.2, color = 'grey', width = 0)+
+  geom_point(data = poisGAMM_accDf, aes(x = date, y = prediction), size = 2, color = 'grey')+
   geom_line(aes(x = date, y = count), linewidth = 1.1, color = 'black')+
   geom_point(aes(x = date, y = count), size = 1.2, color = 'black')+
   scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
@@ -786,4 +800,3 @@ poisGAMM_accDf %>%
 ```
 
 
-more forecasts to come???

@@ -66,6 +66,22 @@ logger_df %>%
   facet_wrap(~treatment)+
   theme(legend.position = 'none')
 
+# Model the temperature timeseries above threshold
+logger_list = logger_df %>%
+  select(loggerID, treatment, time = `Central Standard Time (none)`, do_sat = `Dissolved Oxygen Saturation (%)`,
+         temp_C = `Temperature (deg C)`) %>%
+  junkR::named_group_split(loggerID)
+
+x = logger_list[[4]] %>%
+  mutate(time_seq = 1:n())
+
+plot(x$time[250:1000], x$temp_C[250:1000])
+
+smoothsplineData = smooth.spline(x[,c('time_seq','temp_C')])
+# smoothData = smooth(x$temp_C)
+# loessData = loess(temp_C ~ time_seq, span = 0.005, data = x)
+plot(smoothsplineData$y[250:1000], type ='l', col = 'blue')
+lines(x$time_seq, x$temp_C, col = 'red', add = TRUE)
 # calculate metabolism
 
 working_loggerID = "026311"
