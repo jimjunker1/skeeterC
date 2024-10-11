@@ -68,6 +68,7 @@ logger_df %>%
 
 # Model the temperature timeseries above threshold
 logger_list = logger_df %>%
+  filter(!grepl("NA",loggerID)) %>%
   select(loggerID, treatment, time = `Central Standard Time (none)`, do_sat = `Dissolved Oxygen Saturation (%)`,
          temp_C = `Temperature (deg C)`) %>%
   junkR::named_group_split(loggerID)
