@@ -17,7 +17,7 @@ read_miniDOT = function(x, list = FALSE,...){
   data = read.table(x, header = FALSE, sep = ",", skip = 9, strip.white = TRUE)
   colNames = paste(labels, units)
   colnames(data) <- colNames
-  data[["UTC_Date_&_Time (none)"]] <- as.POSIXct(data[["UTC_Date_&_Time (none)"]], format = "%Y-%m-%d %H:%M:%S")
+  data[["UTC_Date_&_Time (none)"]] <- as.POSIXct(data[["UTC_Date_&_Time (none)"]], format = "%Y-%m-%d %H:%M:%S", tz = "America/Chicago")
   data[["Central Standard Time (none)"]] <- as.POSIXct(data[["Central Standard Time (none)"]], format = "%Y-%m-%d %H:%M:%S")
   if(list){
     return(list(metadata = metadata,
@@ -51,6 +51,51 @@ split_kable <- function(df, index, n_tb = 2, digits = 3,...) {
   tb <- dplyr::slice(df, start : end, .preserve=TRUE)
   return(kable(tb, digits = digits,...))
 }
+
+#' @title tempFill_custom
+#' @Description This function fills in temperature data that are above a specified threshold
+#' @param df df is the full miniDot data.frame
+#' @param too_hot This numeric variable specifies the temperature threshold above which the logger temp data is wrong
+#'
+tempFill_custom = function(df, too_hot = 36,...){
+  tempVec = df$temp_C
+  if(sum(tempVec[tempVec >= too_hot]) <= 4){
+    cat("No temperatures over threshold")
+    return(df)
+  } else{
+    firstHot = min(which(tempVec >= too_hot))
+    lastHot = max(which(tempVec >= too_hot))
+    risingModelDf = data.frame(
+      time_seq = ((firstHot-30):firstHot) - firstHot,
+      temp_C = tempVec[(firstHot - 30):firstHot]
+    )
+    risingModel = lm(temp_C ~ time_seq, data = risingModelDf)#;summary(risingModel)
+    risingPred = data.frame(time_seq = (firstHot:lastHot) - firstHot,
+                            temp_C = predict(risingModel, newdata = data.frame(time_seq = (firstHot:lastHot) - firstHot)))
+
+    fallingModelDf = data.frame(
+      time_seq = (lastHot:length(tempVec) - lastHot),
+      temp_C = tempVec[(lastHot:length(tempVec))]
+    )
+    fallingModel = lm(temp_C ~ poly(time_seq,3), data = fallingModelDf)#;summary(fallingModel)
+    fallingPred = data.frame(time_seq = (firstHot:lastHot) - lastHot,
+                             temp_C = predict(fallingModel, newdata = data.frame(time_seq = (firstHot:lastHot) - lastHot)))
+
+    upDownDf = data.frame(time_seq = firstHot:lastHot,
+                          risingPred = risingPred$temp_C,
+                          fallingPred = fallingPred$temp_C) %>%
+      mutate(dist = abs(risingPred - fallingPred))
+
+    minDist = upDownDf %>% slice_min(dist) %>% select(time_seq) %>% unlist
+
+    temp_C_pred = ifelse(upDownDf$time_seq < minDist, upDownDf$risingPred, upDownDf$fallingPred)
+
+    tempVec[firstHot:lastHot] <- temp_C_pred
+    df$temp_C = tempVec
+    return(df)
+  }
+}
+
 ## set options
 options(mc.cores = parallel::detectCores())
 theme_set(theme_minimal())

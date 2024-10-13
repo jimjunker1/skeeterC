@@ -2,7 +2,9 @@
 source(here::here("code/01_setup.R"))
 i_am("code/05_metabolism.R")
 
+library(streamMetabolizer)
 library(LakeMetabolizer)
+library(junkR)
 
 ## read in the logger metadata
 logger_meta <- readxl::read_excel(metab_meta_filepath, col_types = c('text',
@@ -35,6 +37,10 @@ logger_df = logger_filepath%>%
   bind_rows(.id = "loggerID") %>%
   left_join(logger_meta %>% select(loggerID = 'logger id', block, mesocosm, treatment),., by = "loggerID")
 
+logger_labels = logger_df %>%
+  select(loggerID, treatment, block) %>%
+  distinct() %>%
+  mutate(label = paste(treatment," Block: ", block," ID: ",loggerID, sep = ""))
 ## DO sat plots
 
 logger_df %>%
@@ -69,21 +75,184 @@ logger_df %>%
 # Model the temperature timeseries above threshold
 logger_list = logger_df %>%
   filter(!grepl("NA",loggerID)) %>%
-  select(loggerID, treatment, time = `Central Standard Time (none)`, do_sat = `Dissolved Oxygen Saturation (%)`,
+  select(loggerID, treatment, block, time = `Central Standard Time (none)`, do_sat = `Dissolved Oxygen Saturation (%)`, do_mgL = `Dissolved Oxygen (mg/l)`,
          temp_C = `Temperature (deg C)`) %>%
   junkR::named_group_split(loggerID)
 
-x = logger_list[[4]] %>%
-  mutate(time_seq = 1:n())
+##
+# debugonce(tempFill_custom)
+# y = x %>%
+#   named_group_split(day) %>%
+#   purrr::map(~tempFill_custom(.x, too_hot = 36.1)) %>%
+#   bind_rows(.id = "day")
 
-plot(x$time[250:1000], x$temp_C[250:1000])
+logger_df = logger_list %>%
+  map(~.x %>%
+        mutate(day = as.Date(time, tz = 'America/Chicago')) %>%
+        named_group_split(day) %>%
+        map(~tempFill_custom(.x, too_hot = 36.2 )) %>%
+        bind_rows(.id = 'day')) %>%
+  bind_rows(.id = "loggerID")
 
-smoothsplineData = smooth.spline(x[,c('time_seq','temp_C')])
-# smoothData = smooth(x$temp_C)
-# loessData = loess(temp_C ~ time_seq, span = 0.005, data = x)
-plot(smoothsplineData$y[250:1000], type ='l', col = 'blue')
-lines(x$time_seq, x$temp_C, col = 'red', add = TRUE)
 # calculate metabolism
+## split by loggerID
+logger_metabDfList = logger_df %>%
+  named_group_split(loggerID) %>%
+  purrr::map(\(x){
+    k600_cole = k.cole(x %>% select(datetime = "time") %>% mutate(wnd = 5))
+    cat()
+    k_gas = k600.2.kGAS.base(k600_cole$wnd, x$temp_C, 'O2')
+    do_sat = o2.at.sat.base(x$temp_C, altitude = 201)
+    irr = streamMetabolizer::calc_light(calc_solar_time(x$time,
+                                                        longitude = -97.133064),
+                                        latitude = 33.214840,
+                                        longitude = -97.133064
+                                        )
+    irr_bin = ifelse(irr > 0, 1,0)
+    depth = 10.5/100
+    wtr = x$temp_C
+    lake.lat = 33.214840
+    data.frame(datetime = x$time,
+               do.obs = x$do_mgL,
+               do.sat = do_sat,
+               k.gas = k_gas,
+               z.mix = depth,
+               irr = irr,
+               irr.bin = irr_bin,
+               wtr = wtr,
+               lake.lat = lake.lat) %>%
+      mutate(k.gas = ifelse(wtr > 46.8, 10, k.gas))
+  })
+
+## bookkeeping metabolism
+logger_bookkeep_metabList = logger_metabDfList %>%
+  purrr::map(\(x){
+    y = x %>% mutate(day = as.Date(datetime, tz = 'America/Chicago')) %>% named_group_split(day) %>% .[-c(1,length(.))] %>% purrr::map(~data.frame(.x)) %>% bind_rows()
+
+    metab(y, method = "bookkeep", wtr.name = 'wtr', irr.name = 'irr.bin', do.obs.name = 'do.obs')
+  })
+
+logger_bookkeep_metabDf = logger_bookkeep_metabList %>%
+  bind_rows(.id = 'loggerID')
+
+logger_bookkeep_metabDf %>%
+  left_join(logger_labels, by = "loggerID") %>%
+  mutate(label = factor(label)) %>%
+  ggplot()+
+  geom_hline(yintercept = 0)+
+  geom_line(aes(x = doy, y = GPP), color = 'green')+
+  geom_point(aes(x = doy, y = GPP), shape = 21, color = 'black', fill = 'green')+
+  geom_line(aes(x = doy, y = R), color = 'brown')+
+  geom_point(aes(x = doy, y = R), shape = 21, color = 'black', fill = 'brown')+
+  facet_wrap(~label, labeller = 'label_value')
+
+## maximum likelihood metabolism
+logger_mle_metabList = logger_metabDfList %>%
+  purrr::map(\(x){
+    y = x %>% mutate(day = as.Date(datetime, tz = 'America/Chicago')) %>% named_group_split(day) %>% .[-c(1,length(.))] %>% purrr::map(~data.frame(.x)) %>% bind_rows()
+
+    metab(y, method = "mle", wtr.name = 'wtr', irr.name = 'irr.bin', do.obs.name = 'do.obs')
+  })
+
+logger_mle_metabDf = logger_mle_metabList %>%
+  bind_rows(.id = 'loggerID')
+
+logger_mle_metabDf %>%
+  left_join(logger_labels, by = "loggerID") %>%
+  mutate(label = factor(label)) %>%
+  ggplot()+
+  geom_hline(yintercept = 0)+
+  geom_line(aes(x = doy, y = GPP), color = 'green')+
+  geom_point(aes(x = doy, y = GPP), shape = 21, color = 'black', fill = 'green')+
+  geom_line(aes(x = doy, y = R), color = 'brown')+
+  geom_point(aes(x = doy, y = R), shape = 21, color = 'black', fill = 'brown')+
+  facet_wrap(~label, labeller = 'label_value')
+
+## ols metabolism
+logger_ols_metabList = logger_metabDfList %>%
+  purrr::map(\(x){
+    y = x %>% mutate(day = as.Date(datetime, tz = 'America/Chicago')) %>% named_group_split(day) %>% .[-c(1,length(.))] %>% purrr::map(~data.frame(.x)) %>% bind_rows()
+
+    metab(y, method = "ols", wtr.name = 'wtr', irr.name = 'irr.bin', do.obs.name = 'do.obs')
+  })
+
+logger_ols_metabDf = logger_ols_metabList %>%
+  bind_rows(.id = 'loggerID')
+
+logger_ols_metabDf %>%
+  left_join(logger_labels, by = "loggerID") %>%
+  mutate(label = factor(label)) %>%
+  ggplot()+
+  geom_hline(yintercept = 0)+
+  geom_line(aes(x = doy, y = GPP), color = 'green')+
+  geom_point(aes(x = doy, y = GPP), shape = 21, color = 'black', fill = 'green')+
+  geom_line(aes(x = doy, y = R), color = 'brown')+
+  geom_point(aes(x = doy, y = R), shape = 21, color = 'black', fill = 'brown')+
+  facet_wrap(~label, labeller = 'label_value')
+
+## kalman filter metabolism
+logger_kalman_metabList = logger_metabDfList %>%
+  purrr::map(\(x){
+    y = x %>% mutate(day = as.Date(datetime, tz = 'America/Chicago')) %>% named_group_split(day) %>% .[-c(1,length(.))] %>% purrr::map(~data.frame(.x)) %>% bind_rows()
+
+    metab(y, method = "kalman", wtr.name = 'wtr', irr.name = 'irr.bin', do.obs.name = 'do.obs')
+  })
+
+logger_kalman_metabDf = logger_kalman_metabList %>%
+  bind_rows(.id = 'loggerID')
+
+logger_kalman_metabDf %>%
+  left_join(logger_labels, by = "loggerID") %>%
+  mutate(label = factor(label)) %>%
+  ggplot()+
+  geom_hline(yintercept = 0)+
+  geom_line(aes(x = doy, y = GPP), color = 'green')+
+  geom_point(aes(x = doy, y = GPP), shape = 21, color = 'black', fill = 'green')+
+  geom_line(aes(x = doy, y = R), color = 'brown')+
+  geom_point(aes(x = doy, y = R), shape = 21, color = 'black', fill = 'brown')+
+  facet_wrap(~label, labeller = 'label_value')
+
+## Bayesian metabolism
+logger_bayes_metabList = readRDS(here::here("data/models/logger_bayes_metabList.rds"))
+#   logger_metabDfList %>%
+#   purrr::map(\(x){
+#     y = x %>% mutate(day = as.Date(datetime, tz = 'America/Chicago')) %>% named_group_split(day) %>% .[-c(1,length(.))] %>% purrr::map(~data.frame(.x)) %>% bind_rows()
+#
+#     metab(y, method = "bayesian", wtr.name = 'wtr', irr.name = 'irr.bin', do.obs.name = 'do.obs')
+#   })
+# saveRDS(logger_bayes_metabList, here::here("data/models/logger_bayes_metabList.rds"))
+logger_bayes_metabDf = logger_bayes_metabList %>%
+  bind_rows(.id = 'loggerID')
+
+logger_bayes_metabDf %>%
+  left_join(logger_labels, by = "loggerID") %>%
+  mutate(label = factor(label)) %>%
+  ggplot()+
+  geom_hline(yintercept = 0)+
+  geom_line(aes(x = doy, y = GPP), color = 'green')+
+  geom_point(aes(x = doy, y = GPP), shape = 21, color = 'black', fill = 'green')+
+  geom_line(aes(x = doy, y = R), color = 'brown')+
+  geom_point(aes(x = doy, y = R), shape = 21, color = 'black', fill = 'brown')+
+  facet_wrap(~label, labeller = 'label_value')
+
+##### End metabolism models----
+
+
+
+
+x = logger_metabDfList[[1]] %>% mutate(day = as.Date(datetime, tz = 'America/Chicago')) %>% named_group_split(day) %>% .[-c(1,length(.))] %>% purrr::map(~data.frame(.)) %>%  bind_rows()
+
+x_split = x %>% named_group_split(day) %>% purrr::map(~.x %>% select(-day))
+y = x_split[[1]]
+with(y, metab.bookkeep(datetime = datetime,
+                       do.obs = do.obs,
+                       do.sat = do_sat,
+                       k.gas = k.gas,
+                       irr = irr.bin,
+                       z.mix = z.mix,
+                       wtr = wtr))
+
+#%>% purrr::map(~metab(.x, method = 'bookkeep', irr.name = 'irr.bin'))
 
 working_loggerID = "026311"
 
@@ -91,26 +260,51 @@ working_loggerID = "026311"
 
 ts026311 = logger_df %>%
   filter(loggerID %in% working_loggerID,
-         between(`Central Standard Time (none)`,
+         between(time,
                  as.POSIXct(unlist(logger_meta[which(logger_meta$`logger id` == working_loggerID), 'deploy'])), as.POSIXct("2024-07-22 18:00:00"))) %>%
-  select(loggerID, block, treatment, time = `Central Standard Time (none)`,
-         temp = `Temperature (deg C)`,
-         do_mgL = `Dissolved Oxygen (mg/l)`,
-         do_sat = `Dissolved Oxygen Saturation (%)`) %>%
-  mutate(depth = 11.5)
+  select(loggerID, block, treatment, time,
+         temp_C,
+         do_mgL,
+         do_sat) %>%
+  mutate(depth = 10.5)
 
 # estimate k time series
 k600_cole = k.cole(ts026311 %>% select(datetime = "time") %>% mutate(wnd = 5))
-k.gas = k600.2.kGAS.base(k600_cole$wnd, ts026311$temp, 'O2')
+k.gas = k600.2.kGAS.base(k600_cole$wnd, ts026311$temp_C, 'O2')
 
-do_sat = o2.at.sat.base(ts026311$temp, 201)
+do_sat = o2.at.sat.base(ts026311$temp_C, 201)
 
-irr = streamMetabolizer::calc_light()
+irr = streamMetabolizer::calc_light(calc_solar_time(ts026311$time, longitude = -97.133064),
+                                    latitude = 33.214840,
+                                    longitude = -97.133064
+                                    )
+irr = ifelse(irr > 0, 0,1)
 
-metab026311 <- metab.bookkeep(ts026311$do_mgL,
-                              do.sat = do_sat,
-                              k.gas = k.gas,
-                              ts026311$time)
 
+ts026311_metab = data.frame(do.obs = ts026311$do_mgL,
+                            do.sat = do_sat,
+                            k.gas = k.gas,
+                            z.mix = ts026311$depth/100,
+                            irr = irr,
+                            datetime = ts026311$time) %>%
+  mutate(day = as.Date(datetime, tz = 'America/Chicago')) %>%
+  named_group_split(day) %>% .[-c(1,length(.))]
 
+metab026311 <- ts026311_metab %>%
+  purrr::map(~with(.x,
+                   metab.bookkeep(do.obs = do.obs,
+                                  do.sat = do_sat,
+                                  k.gas = k.gas,
+                                  irr = irr,
+                                  z.mix = z.mix,
+                                  datetime = datetime)))
+
+x = ts026311_metab[[1]]
+
+x_metab = with(x,metab.bookkeep(do.obs = do.obs,
+                 do.sat = do.sat,
+                 k.gas = k.gas,
+                 irr = irr,
+                 z.mix = z.mix,
+                 datetime = datetime))
 
