@@ -275,19 +275,74 @@ logger_bayes_metabDf %>%
   geom_line(aes(x = doy, y = GPP, group = treatment, color = treatment), linewidth = 2) +
   geom_line(aes(x = doy, y = R, group = treatment, color = treatment), linetype = 'dashed', linewidth = 2)
 
-
 raft_data = readxl::read_excel(raft_filepath) %>%
-  select(-Block, -Mesocosm, -Treatment, -Site)
+  select(-Block, -Mesocosm, -Site)
 
 # identify columns with numbers
 raftNumCols = names(raft_data) %>% as.numeric %>% is.na %>% `!`
 
 # rename cols to readable dates
-raft_data = raft_data %>%
+raft_data_summ = raft_data %>%
   rename_with(~as.character(openxlsx::convertToDate(.x, origin='1900-01-01')), .cols = names(.)[raftNumCols]) %>%
-  filter(!is.na(ID))
+  filter(!is.na(ID)) %>%
+  select(-ID, -Mean, -Cumulative) %>%
+  pivot_longer(cols = c(-Treatment), names_to = 'date', values_to = 'rafts_ct') %>%
+  group_by(Treatment, date) %>%
+  summarise(rafts_mean = mean(rafts_ct, na.rm = TRUE),
+            rafts_se = (1.96*sd(rafts_ct, na.rm = TRUE)/8)) %>%
+  mutate(days = as.numeric(as.Date(date) - as.Date(min(date)))+1) %>%
+  filter(!grepl("Charlie", Treatment))
 
-pred_data = readxl::read_excel(pred_filepath, skip = 1) %>%
+raft_data_summ %>%
+  ggplot()+
+  geom_hline(aes(yintercept = 0))+
+  geom_line(aes(x = days, y = rafts_mean, color = Treatment), linewidth = 1)+
+  geom_pointrange(aes(x = days, y = rafts_mean, ymin = (rafts_mean - rafts_se),
+                      ymax= (rafts_mean + rafts_se), color = Treatment),
+                  linewidth = 1.1)+
+  scale_y_continuous(name = expression("Egg rafts ( avg. # "*mesocosm^-1*" )"),
+                     expand = c(0.01,0))+
+  scale_x_continuous(limits = c(0, NA), position = 'top', expand = c(0,0)) +
+  coord_cartesian(clip = 'off')+
+  theme(legend.position = 'inside',
+        legend.position.inside = c(1,1),
+        legend.justification = c(1,1),
+        plot.margin = unit(c(0,0.2,0,0), 'lines'),
+        plot.background = element_rect(fill = 'transparent', color = NA),
+        rect = element_rect(fill = 'transparent'),
+        panel.grid.minor = element_blank()) -> raft_plot
+
+logger_bayes_metabDf %>%
+  left_join(logger_meta %>% rename(loggerID = 'logger id'), by = "loggerID") %>%
+  group_by(treatment, doy) %>%
+  mutate(R = ifelse(GPP < 0, R + GPP, R)) %>%
+  mutate(GPP = ifelse(GPP < 0, 0, GPP)) %>%
+  summarise(R_mean = mean(R, na.rm = TRUE),
+            R_sd = (1.96*sd(R, na.rm = TRUE)/4)) %>%
+  mutate(days = as.numeric(doy - min(doy))+1) %>%
+  filter(days <= 17) %>%
+  ggplot()+
+  geom_ribbon(aes(x = days, ymin = (R_mean - R_sd), ymax = (R_mean + R_sd),
+                  fill = treatment), alpha = 0.5)+
+  geom_line(aes( x = days, y = R_mean, color = treatment), linewidth = 1.3)+
+  scale_x_continuous(limits = c(0, NA), expand = c(0,0))+
+  scale_y_continuous(name = expression("ER ( mg "~O[2]~d^-1~")"),
+                     expand = c(0.05,0), breaks = c(-100,-200,-300))+
+  theme(legend.position = 'none',
+        plot.margin = unit(c(0.08,0.2,0,0), 'lines'),
+        plot.background = element_rect(fill = 'transparent', color = NA),
+        rect = element_rect(fill = 'transparent'),
+        panel.grid.minor = element_blank())->ER_plot
+
+# ER_plot = ggplotGrob(ER_plot)
+# raft_plot = ggplotGrob(raft_plot)
+
+png(filename = here::here("doc/raft_ER_plot.png"), height = 6, width = 5,res = 450, units = 'in')
+ggpubr::ggarrange(raft_plot, ER_plot, ncol = 1, align = 'v')
+dev.off()
+
+
+depred_data = readxl::read_excel(pred_filepath, skip = 1) %>%
   filter(is.na(name) |
            name != 'Observed')
 predNumCols = names(pred_data) %>% as.numeric %>% is.na %>% `!`
