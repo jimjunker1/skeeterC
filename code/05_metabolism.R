@@ -2,6 +2,8 @@
 source(here::here("code/01_setup.R"))
 i_am("code/05_metabolism.R")
 
+raft_filepath = sprintf("C:/Users/%s/OneDrive - UNT System/AERI Seed Insect Carbon/Data/2024_aeri_seed_mosquito_data.xlsx", Sys.info()[['user']])
+
 library(streamMetabolizer)
 library(LakeMetabolizer)
 library(junkR)
@@ -94,6 +96,14 @@ logger_df = logger_list %>%
         bind_rows(.id = 'day')) %>%
   bind_rows(.id = "loggerID")
 
+logger_df %>%
+  select(loggerID, treatment, time,
+         temp_C) %>%
+  ggplot()+
+  geom_line(aes(x = time, y = temp_C, group = loggerID, color = loggerID))+
+  facet_wrap(~treatment)+
+  theme(legend.position = 'none')
+
 # calculate metabolism
 ## split by loggerID
 logger_metabDfList = logger_df %>%
@@ -139,12 +149,15 @@ logger_bookkeep_metabDf %>%
   left_join(logger_labels, by = "loggerID") %>%
   mutate(label = factor(label)) %>%
   ggplot()+
+  ggtitle("Bookkeeping")+
   geom_hline(yintercept = 0)+
   geom_line(aes(x = doy, y = GPP), color = 'green')+
   geom_point(aes(x = doy, y = GPP), shape = 21, color = 'black', fill = 'green')+
   geom_line(aes(x = doy, y = R), color = 'brown')+
   geom_point(aes(x = doy, y = R), shape = 21, color = 'black', fill = 'brown')+
-  facet_wrap(~label, labeller = 'label_value')
+  ylab(expression("GPP or ER ( mg"~O[2]~d^-1~")"))+
+  facet_wrap(~label, labeller = 'label_value')+
+  theme(axis.title.x = element_blank())
 
 ## maximum likelihood metabolism
 logger_mle_metabList = logger_metabDfList %>%
@@ -161,12 +174,15 @@ logger_mle_metabDf %>%
   left_join(logger_labels, by = "loggerID") %>%
   mutate(label = factor(label)) %>%
   ggplot()+
+  ggtitle("MLE")+
   geom_hline(yintercept = 0)+
   geom_line(aes(x = doy, y = GPP), color = 'green')+
   geom_point(aes(x = doy, y = GPP), shape = 21, color = 'black', fill = 'green')+
   geom_line(aes(x = doy, y = R), color = 'brown')+
   geom_point(aes(x = doy, y = R), shape = 21, color = 'black', fill = 'brown')+
-  facet_wrap(~label, labeller = 'label_value')
+  ylab(expression("GPP or ER ( mg"~O[2]~d^-1~")"))+
+  facet_wrap(~label, labeller = 'label_value')+
+  theme(axis.title.x = element_blank())
 
 ## ols metabolism
 logger_ols_metabList = logger_metabDfList %>%
@@ -183,12 +199,15 @@ logger_ols_metabDf %>%
   left_join(logger_labels, by = "loggerID") %>%
   mutate(label = factor(label)) %>%
   ggplot()+
+  ggtitle("OLS")+
   geom_hline(yintercept = 0)+
   geom_line(aes(x = doy, y = GPP), color = 'green')+
   geom_point(aes(x = doy, y = GPP), shape = 21, color = 'black', fill = 'green')+
   geom_line(aes(x = doy, y = R), color = 'brown')+
   geom_point(aes(x = doy, y = R), shape = 21, color = 'black', fill = 'brown')+
-  facet_wrap(~label, labeller = 'label_value')
+  ylab(expression("GPP or ER ( mg"~O[2]~d^-1~")"))+
+  facet_wrap(~label, labeller = 'label_value')+
+  theme(axis.title.x = element_blank())
 
 ## kalman filter metabolism
 logger_kalman_metabList = logger_metabDfList %>%
@@ -205,12 +224,15 @@ logger_kalman_metabDf %>%
   left_join(logger_labels, by = "loggerID") %>%
   mutate(label = factor(label)) %>%
   ggplot()+
+  ggtitle("Kalman")+
   geom_hline(yintercept = 0)+
   geom_line(aes(x = doy, y = GPP), color = 'green')+
   geom_point(aes(x = doy, y = GPP), shape = 21, color = 'black', fill = 'green')+
   geom_line(aes(x = doy, y = R), color = 'brown')+
   geom_point(aes(x = doy, y = R), shape = 21, color = 'black', fill = 'brown')+
-  facet_wrap(~label, labeller = 'label_value')
+  ylab(expression("GPP or ER ( mg"~O[2]~d^-1~")"))+
+  facet_wrap(~label, labeller = 'label_value')+
+  theme(axis.title.x = element_blank())
 
 ## Bayesian metabolism
 logger_bayes_metabList = readRDS(here::here("data/models/logger_bayes_metabList.rds"))
@@ -228,14 +250,93 @@ logger_bayes_metabDf %>%
   left_join(logger_labels, by = "loggerID") %>%
   mutate(label = factor(label)) %>%
   ggplot()+
+  ggtitle("Bayesian")+
   geom_hline(yintercept = 0)+
   geom_line(aes(x = doy, y = GPP), color = 'green')+
   geom_point(aes(x = doy, y = GPP), shape = 21, color = 'black', fill = 'green')+
   geom_line(aes(x = doy, y = R), color = 'brown')+
   geom_point(aes(x = doy, y = R), shape = 21, color = 'black', fill = 'brown')+
-  facet_wrap(~label, labeller = 'label_value')
+  ylab(expression("GPP or ER ( mg"~O[2]~d^-1~")"))+
+  facet_wrap(~label, labeller = 'label_value')+
+  theme(axis.title.x = element_blank())
 
 ##### End metabolism models----
+### Summarise metabolism data by treatment -----
+
+logger_bayes_metabDf %>%
+  left_join(logger_meta %>% rename(loggerID = 'logger id'), by = "loggerID") %>%
+  group_by(treatment, doy) %>%
+  mutate(R = ifelse(GPP < 0, R + GPP, R)) %>%
+  mutate(GPP = ifelse(GPP < 0, 0, GPP)) %>%
+  summarise(GPP = mean(GPP, na.rm = TRUE),
+            R = mean(R, na.rm = TRUE)) %>%
+  ggplot()+
+  geom_hline(aes(yintercept = 0))+
+  geom_line(aes(x = doy, y = GPP, group = treatment, color = treatment), linewidth = 2) +
+  geom_line(aes(x = doy, y = R, group = treatment, color = treatment), linetype = 'dashed', linewidth = 2)
+
+
+raft_data = readxl::read_excel(raft_filepath) %>%
+  select(-Block, -Mesocosm, -Treatment, -Site)
+
+# identify columns with numbers
+raftNumCols = names(raft_data) %>% as.numeric %>% is.na %>% `!`
+
+# rename cols to readable dates
+raft_data = raft_data %>%
+  rename_with(~as.character(openxlsx::convertToDate(.x, origin='1900-01-01')), .cols = names(.)[raftNumCols]) %>%
+  filter(!is.na(ID))
+
+pred_data = readxl::read_excel(pred_filepath, skip = 1) %>%
+  filter(is.na(name) |
+           name != 'Observed')
+predNumCols = names(pred_data) %>% as.numeric %>% is.na %>% `!`
+
+pred_data = pred_data %>%
+  rename_with(~as.character(openxlsx::convertToDate(.x, origin='1900-01-01')), .cols = names(.)[predNumCols]) %>%
+  mutate(across(-c(name), as.numeric))
+
+# count_vec = readxl::read_excel(pred_filepath)%>% filter(name == 'Total')
+count_df = raft_data %>% select(which(raftNumCols)) %>% colSums(na.rm = TRUE) %>% enframe(name = 'date', value = 'count') %>%
+  mutate(date = as.Date(date))
+
+current_date = ifelse(Sys.Date() > as.Date("2024-07-13"), as.character("2024-07-13"), as.character(Sys.Date()))
+
+name_df = c('GD' = 'Grace',
+            'AM' = 'Arya',
+            'EAC' = 'Emily',
+            'JD' = 'Dr. D',
+            'JMR' = 'Julia',
+            'JRJ' = 'Jim',
+            'JRB' = 'Dr. B',
+            'ZC' = 'Z',
+            'ARM' = 'Angel',
+            'CRG' = 'Chris',
+            'JK' = 'Juwan')
+pred_plotDf = pred_data %>%
+  pivot_longer(-name, names_to = 'date', values_to = 'prediction') %>%
+  mutate(date = as.Date(date),
+         old = ifelse(as.Date(date)<(Sys.Date()+1), TRUE, FALSE))
+
+# set plotting attributes
+ylims = c(0,10^(signif(log10(max(c(count_df$count,na.omit(pred_plotDf$prediction)))))))
+
+labelsDf = data.frame(date = as.numeric(count_df$date), datelab = as.character(format(count_df$date, "%b-%d")), day = paste0("Day ",1:nrow(count_df)))# %>% unite('label', date:day, sep = "") %>% unlist %>% unname
+
+# do the plotting
+ggplot()+
+  geom_point(data = pred_plotDf, aes(x = as.numeric(date), y = prediction, color = old), shape = 21, fill = 'white', size = 1.2)+
+  geom_line(data = count_df , aes(x = as.numeric(date), y = count ), linewidth = 1.1, color = 'black')+
+  scale_y_continuous(name = "Skeeter Rafts (#)", limits = ylims)+
+  scale_x_continuous(breaks = labelsDf$date, labels = labelsDf$datelab, sec.axis = dup_axis(labels = labelsDf$day))+
+  scale_color_manual(values = c('black','darkgrey'))+
+  theme(axis.title.x = element_blank(),
+        legend.position = 'none',
+        axis.text.x.bottom = element_text(size = 10, angle = 45, hjust = 1, vjust = 1),
+        axis.text.x.top = element_text(size = 10, angle = 45, hjust = 0, vjust = 0),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.minor.x = element_blank())
+
 
 
 
